@@ -1,432 +1,686 @@
-# DevOps / SRE / Platform Engineer — Interview Question Bank
-> 200+ questions across 10 topic areas. Moderate to difficult. No answers.
+## Q1 | Kubernetes → Scheduler Internals | Conceptual
+
+Explain the sequence of events that occurs from the moment a Pod spec is submitted via `kubectl apply` to the moment the container is running on a node. Include the roles of the API server, etcd, the scheduler's filtering and scoring phases, the kubelet, and the container runtime. What happens if the scheduler cannot find a suitable node?
 
 ---
 
-## 1. AWS
+## Q2 | AWS → VPC Networking | Scenario
 
-### Core Infrastructure & Compute
-1. An EC2 instance is showing high CPU steal time. What does steal time mean, how do you diagnose it, and what are your options to fix it?
-2. You launch an EC2 instance and it passes both status checks but your application is unreachable. Walk me through every possible reason.
-3. What is the difference between an instance store and an EBS volume? When would you choose one over the other, and what happens to each when the instance stops/terminates?
-4. Explain the difference between On-Demand, Reserved, Spot, and Savings Plans. Design a cost strategy for a mixed production + batch workload.
-5. An Auto Scaling Group is not scaling out despite CPU being at 90%. What could prevent it from scaling?
-6. What is EC2 placement groups? Compare cluster, partition, and spread placement groups and give a use case for each.
-7. You need zero-downtime deployment on EC2 with an ALB. Walk me through the exact steps using ASG lifecycle hooks.
-
-### Networking / VPC
-8. Walk me through exactly what happens at the network level when an EC2 instance in a private subnet makes a request to the internet via a NAT Gateway.
-9. What is the difference between a Security Group and a NACL? Give a scenario where a NACL is required but a Security Group alone is insufficient.
-10. You have a VPC with CIDR 10.0.0.0/16. You need to add a new subnet but all IPs are allocated. What are your options?
-11. Explain VPC Flow Logs — what they capture, what they don't capture, and how you'd use them to diagnose a connectivity issue.
-12. What is AWS PrivateLink and when would you use it instead of VPC Peering?
-13. A route table has two entries: 10.0.0.0/16 → local, and 0.0.0.0/0 → IGW. A new entry 10.0.1.0/24 → NAT is added. Explain routing precedence.
-14. Your application in us-east-1 needs to communicate with a service in eu-west-1 privately without traversing the internet. What are your options?
-
-### Storage
-15. Compare S3 storage classes (Standard, IA, Glacier, Glacier Deep Archive). Design a lifecycle policy for logs that are frequently accessed for 30 days, occasionally for 90 days, then archived.
-16. An S3 bucket policy and IAM policy conflict — one allows, one denies. What's the outcome? How does AWS evaluate these?
-17. What is S3 Object Lock and how does it differ from versioning? When would you need both?
-18. You're seeing high S3 latency for small object reads. What could cause this and how do you fix it?
-19. EBS volume performance is degraded. Walk me through diagnosing whether it's an IOPS, throughput, or latency issue.
-
-### Containers / Serverless
-20. ECS task fails to pull an image from ECR. Walk me through every possible reason.
-21. What is the difference between ECS task role and ECS execution role? What breaks if you confuse them?
-22. A Lambda function works fine locally but times out in AWS. What are the possible causes?
-23. Explain Lambda cold starts — what causes them, how to measure them, and every option to mitigate them.
-24. What is the difference between Lambda provisioned concurrency and reserved concurrency?
-25. You need a Lambda function to access an RDS database. What is the recommended pattern and why not just use credentials in environment variables?
-
-### Databases
-26. Your RDS instance has high read latency. Walk through your diagnosis — what metrics, what logs, what queries?
-27. What is the difference between RDS Multi-AZ and Read Replicas? Can you use a Read Replica for failover?
-28. Explain Aurora's storage architecture and why it's fundamentally different from standard RDS MySQL.
-29. Your DynamoDB table has hot partitions. How do you detect this and what are your options to fix it?
-30. Compare DynamoDB provisioned vs on-demand capacity. When does on-demand become more expensive?
-
-### Observability
-31. What is the difference between CloudWatch Metrics, CloudWatch Logs, and CloudWatch Logs Insights? When would you use each?
-32. Explain CloudWatch Contributor Insights and give a real use case where it would catch something standard metrics wouldn't.
-33. You need to correlate logs across multiple AWS services for a single user request. What's your architecture?
-34. What is X-Ray sampling and why is 100% tracing often not the right choice in production?
-
-### Security
-35. What is the difference between an IAM role, IAM user, and IAM group? Why should applications never use IAM users?
-36. Explain AWS STS AssumeRole. Walk me through the exact token flow when an ECS task assumes a role.
-37. What is AWS Secrets Manager vs SSM Parameter Store? When would you choose one over the other?
-38. Your AWS account shows unrecognized API calls in CloudTrail. Walk me through your incident response steps.
-39. What is SCPs (Service Control Policies) in AWS Organizations? How do they interact with IAM policies?
-40. Explain IMDSv2 and why IMDSv1 is a security risk. What attack does IMDSv2 prevent?
-
-### Messaging
-41. Compare SQS Standard vs FIFO queues. When does ordering matter and what are the FIFO throughput limits?
-42. What is the difference between SQS visibility timeout and message retention period? What happens when a consumer crashes mid-processing?
-43. Explain the fan-out pattern with SNS + SQS. Why not just use SNS directly to Lambda?
-44. Your SQS queue depth is growing unbounded. Walk through your diagnosis and remediation options.
-
-### Infrastructure Automation & Cost
-45. What is AWS CDK vs CloudFormation vs Terraform? When would you choose CDK over Terraform?
-46. Explain CloudFormation drift detection and its limitations.
-47. Your AWS bill jumped 40% this month. Walk me through how you'd identify the cause using native AWS tools.
-48. What are AWS Compute Optimizer recommendations based on, and what data does it need before recommendations are reliable?
+Your application team reports intermittent timeouts connecting from an ECS Fargate service in a private subnet to an RDS PostgreSQL instance in a different private subnet within the same VPC. The connection works fine from a bastion host in a public subnet. Walk through every layer you would inspect — security groups, NACLs, route tables, DNS resolution, and RDS subnet groups — and describe the exact AWS CLI or console commands you would use to isolate the issue.
 
 ---
 
-## 2. CI/CD & Jenkins
+## Q3 | Terraform → State Management | Failure Mode
 
-### Architecture & Fundamentals
-49. Explain the Jenkins master-agent architecture. What happens to running jobs if the master goes down?
-50. What is the difference between Jenkins Freestyle jobs and Pipeline jobs? Why would you never use Freestyle in a modern setup?
-51. How does Jenkins handle agent allocation for parallel stages? What happens if no agent is available?
-52. What is the Jenkins build executor and how does setting executors to 0 on the master affect things?
-
-### Pipelines
-53. What is the difference between `node`, `agent`, and `label` in a Jenkins pipeline?
-54. Explain `stash` and `unstash` in Jenkins pipelines. When is this necessary and what are the performance implications?
-55. Your Jenkins pipeline passes on the first run but fails intermittently on subsequent runs. What are the common causes?
-56. What is the difference between `parallel` stages in Jenkins and what happens when one parallel branch fails?
-57. Explain Jenkins shared libraries — structure, loading mechanisms, and why they're critical for large teams.
-58. What is the `Jenkinsfile` checkout scm behavior and when does it cause problems in multi-branch pipelines?
-
-### Advanced Patterns
-59. How do you implement blue-green deployments in a Jenkins pipeline?
-60. What is Jenkins Configuration as Code (JCasC) and what problem does it solve?
-61. Explain the Jenkins Kubernetes plugin — how does dynamic agent provisioning work and what are its failure modes?
-62. How would you implement pipeline-level mutex/locking to prevent concurrent deploys to the same environment?
-63. Your Jenkins agents are ephemeral containers. A build requires Docker-in-Docker. What are the security implications and alternatives?
-
-### Security & Scaling
-64. What is Jenkins credential binding and why should you never use `withCredentials` and then print environment variables?
-65. How do you prevent a malicious `Jenkinsfile` from exfiltrating secrets in a multi-tenant Jenkins setup?
-66. Jenkins master is the single point of failure. How would you architect Jenkins for HA?
-67. What is the Jenkins job DSL plugin and how does it differ from pipelines?
+A colleague runs `terraform apply` on a pipeline while you are simultaneously running it locally against the same workspace. Both runs succeed independently but the state file now reflects only one set of changes. Describe the exact failure mode, what the state file looks like afterward, how Terraform's state locking should have prevented this, and the step-by-step recovery process including `terraform state` subcommands you would use to reconcile the drift.
 
 ---
 
-## 3. Terraform
+## Q4 | CI/CD & Jenkins → Pipeline Security | Design Tradeoff
 
-### Core Fundamentals
-68. Explain the difference between `terraform plan` and `terraform apply`. What can cause them to produce different results when run back to back?
-69. What is the Terraform dependency graph? How does Terraform determine the order of resource creation?
-70. What is the difference between implicit and explicit dependencies in Terraform? Give a case where implicit dependency fails.
-71. Explain `terraform refresh` and why it's dangerous in production.
-
-### State Management
-72. Your Terraform state file is corrupt. Walk me through recovery options.
-73. What is `terraform state mv` and when would you use it? What happens if you move state without also moving the config?
-74. Two engineers accidentally ran `terraform apply` simultaneously and now state is inconsistent. How do you diagnose and fix this?
-75. What is a Terraform workspace and when should you NOT use workspaces for environment separation?
-76. Explain the implications of storing Terraform state in S3 without versioning enabled.
-
-### Modules & Patterns
-77. What is the difference between a root module and a child module? How does variable passing work between them?
-78. You have a module that creates an S3 bucket. You need to add a lifecycle rule but the module doesn't support it. What are your options without forking the module?
-79. Explain `terraform registry` module versioning. Why should you pin module versions in production?
-80. What is the `moved` block in Terraform and when was it introduced? What problem does it solve over `terraform state mv`?
-
-### Advanced
-81. What is `dynamic` block in Terraform? Give a real use case and explain why overusing it is a code smell.
-82. Explain `for_each` vs `count` tradeoffs in detail — when does each cause problems?
-83. What is a `null_resource` and `terraform_data`? Give a legitimate use case.
-84. Explain Terraform's `lifecycle { prevent_destroy }` — what does it protect against and what doesn't it protect against?
-85. What is Terragrunt and what problems does it solve that vanilla Terraform doesn't?
-86. How do you test Terraform modules? Compare Terratest, `terraform validate`, `tflint`, and Checkov.
+Your Jenkins instance stores AWS credentials as global credentials used across 40 pipelines. A security audit flags this as a blast-radius risk. Compare three alternatives — Jenkins credential scoping + folders, OIDC-based dynamic credentials via AWS IAM Roles Anywhere, and a HashiCorp Vault + Jenkins plugin integration — evaluating secret rotation, auditability, blast radius, and implementation complexity. Which would you recommend for a 200-engineer org and why?
 
 ---
 
-## 4. GitHub Actions
+## Q5 | Linux & Bash → Performance | 2AM Fire
 
-### Architecture & Fundamentals
-87. Explain the GitHub Actions execution model — what is a runner, what is a job, and how does context propagate between steps?
-88. What is the difference between `on: push` and `on: workflow_dispatch`? How do you restrict `workflow_dispatch` to specific branches?
-89. Explain GitHub Actions expressions syntax — `${{ }}`. What is the difference between `github`, `env`, `secrets`, and `vars` contexts?
-90. What is the difference between `jobs.<job>.env` and `steps.<step>.env`? Which takes precedence?
-
-### Security
-91. A GitHub Actions workflow runs on `pull_request_target`. Why is this dangerous and when is it required?
-92. Explain GITHUB_TOKEN permissions — what it can and cannot do by default, and how to scope it down.
-93. How do you prevent secret exfiltration from GitHub Actions when using third-party actions?
-94. What is OpenID Connect (OIDC) in GitHub Actions and how does it eliminate the need for stored cloud credentials?
-
-### Advanced Patterns
-95. How do you implement a matrix build that skips certain combinations? Show the `exclude` syntax.
-96. What is the `concurrency` key in GitHub Actions and what's the difference between `cancel-in-progress: true` vs `false`?
-97. How do you pass data between jobs in GitHub Actions? What are the size limits?
-98. Explain GitHub Actions cache — how does cache key resolution work and what happens on a cache miss?
-99. Your GitHub Actions workflow needs to deploy to 5 environments sequentially, each requiring manual approval. How do you design this?
-
-### Self-Hosted Runners & Monorepos
-100. What are the security risks of self-hosted runners on public repositories?
-101. How do you implement path-based filtering in a monorepo to only run workflows for changed services?
-102. Explain GitHub Actions `needs` dependency and how it handles failures in dependent jobs.
-103. What is a composite action vs a reusable workflow? When would you choose each?
+At 2 AM an alert fires: a Linux host's load average has spiked to 80 on a 16-core machine. SSH is slow but reachable. Write the exact sequence of commands you run in the first 5 minutes — covering CPU, memory, I/O, process state (D-state processes), kernel and OOM log inspection — and explain what each output tells you. Include how you distinguish CPU-bound from I/O-bound saturation.
 
 ---
 
-## 5. Kubernetes
+## Q6 | Prometheus & Grafana → PromQL | Coding
 
-### Architecture
-104. Explain what happens step by step when you run `kubectl apply -f deployment.yaml` — from API server to pod running.
-105. What is the role of the controller manager? How does the ReplicaSet controller work?
-106. Explain etcd's role in Kubernetes. What happens if etcd loses quorum?
-107. What is the difference between the API server's watch mechanism and polling? How does this affect controller performance?
-108. Explain the Kubernetes admission controller pipeline — what is the difference between validating and mutating webhooks?
-
-### Workloads
-109. What is the difference between a Deployment and a StatefulSet? When must you use a StatefulSet?
-110. Explain the difference between `RollingUpdate` and `Recreate` deployment strategies. When is `Recreate` the right choice?
-111. What is a PodDisruptionBudget and why can it prevent node draining?
-112. Explain Kubernetes Job vs CronJob failure handling — `backoffLimit`, `activeDeadlineSeconds`, and `concurrencyPolicy`.
-113. What is an init container and how does it differ from a sidecar? Give a production use case for each.
-114. Your Deployment has 3 replicas. You update the image and all 3 pods crash. Explain what `maxUnavailable` and `maxSurge` control and how to prevent complete outage.
-
-### Networking
-115. Explain kube-proxy modes — iptables vs ipvs. What are the performance differences at scale?
-116. What is a Headless Service and when would you use it instead of a ClusterIP service?
-117. Explain how DNS resolution works in Kubernetes — from pod making a DNS query to receiving an answer.
-118. What is an Ingress controller? How does it differ from a LoadBalancer service?
-119. Explain NetworkPolicy — what is default behavior without any NetworkPolicy, and how do you implement default-deny?
-120. A service has endpoints but traffic is being dropped. What layer would you check next after confirming endpoints exist?
-
-### Storage
-121. Explain the PV/PVC/StorageClass relationship. What is dynamic provisioning?
-122. What is the `ReadWriteMany` access mode and why do most cloud block storage providers not support it?
-123. Explain CSI (Container Storage Interface) and why it replaced in-tree volume plugins.
-124. A pod with a PVC is stuck in `Terminating` state for 30 minutes. What is causing this and how do you fix it?
-
-### Scheduling & Resources
-125. Explain QoS classes in Kubernetes — Guaranteed, Burstable, BestEffort — and how they affect OOMKill priority.
-126. What is the difference between resource requests and limits? What happens when a node is overcommitted?
-127. Explain pod affinity vs pod anti-affinity. Give a production scenario where anti-affinity is critical.
-128. What is the Cluster Autoscaler and what conditions must be true before it scales down a node?
-129. Explain taints and tolerations with a real multi-tenant cluster use case.
-
-### Security
-130. What is a ServiceAccount token and how does the projected volume automount work in newer Kubernetes versions?
-131. Explain RBAC in Kubernetes — Role vs ClusterRole, RoleBinding vs ClusterRoleBinding.
-132. What is the principle of least privilege applied to a pod — list every security context field you should set.
-133. What is Falco and what class of threats does it detect that RBAC and PSA cannot?
-
-### Operations & Troubleshooting
-134. A node is in `NotReady` state. Walk through your complete diagnosis.
-135. `kubectl drain` is hanging. What are the possible reasons and how do you force it?
-136. Explain what happens during a graceful pod termination — `SIGTERM`, `preStop` hooks, `terminationGracePeriodSeconds`.
-137. You need to do a cluster upgrade from 1.27 to 1.29. What is the correct procedure and what are the risks?
-138. Explain etcd backup and restore. How often should you back up etcd in production?
-
-### Istio / Service Mesh
-139. What problem does a service mesh solve that Kubernetes networking alone doesn't?
-140. Explain Istio's sidecar injection mechanism. What happens if the sidecar fails to start?
-141. What is an Istio VirtualService vs DestinationRule? Give a canary deployment example.
-142. How does mutual TLS (mTLS) work in Istio and what does it protect against?
+Write a PromQL query that calculates the 99th percentile request latency per service over the last 5 minutes, using a `http_request_duration_seconds` histogram metric that has labels `service`, `method`, and `status_code`. Then extend the query to alert when the p99 for any service exceeds 500ms for more than 3 consecutive minutes. Show both the recording rule and the alerting rule YAML.
 
 ---
 
-## 6. Prometheus & Grafana
+## Q7 | ArgoCD → Sync Strategies | Conceptual
 
-### Core Concepts & Architecture
-143. Explain the Prometheus pull model. What are its advantages and disadvantages vs a push model?
-144. What is a Prometheus target and how does the scrape lifecycle work — what happens on a failed scrape?
-145. Explain the difference between a Counter, Gauge, Histogram, and Summary. When would you use a Histogram over a Summary?
-146. What is cardinality in Prometheus and why does high cardinality kill performance?
-147. Explain Prometheus TSDB — how does it store data on disk, what are blocks and the WAL?
-
-### PromQL
-148. What is the difference between `rate()` and `irate()`? When does `irate()` give misleading results?
-149. Explain the difference between `sum by` and `sum without`. When would you use each?
-150. What is a range vector vs an instant vector in PromQL?
-151. Write a query to find the 95th percentile request latency from a Histogram metric.
-152. What is subquery in PromQL and when is it necessary?
-153. Explain `offset` modifier and give a use case for week-over-week comparison.
-
-### Alerting & Alertmanager
-154. What is the difference between `for:` duration and `keep_firing_for:` in Prometheus alerts?
-155. Explain Alertmanager routing tree — how does it match alerts to receivers?
-156. What is alert inhibition and when would you use it to prevent alert storms?
-157. Explain the difference between `group_wait`, `group_interval`, and `repeat_interval` in Alertmanager.
-158. Your Alertmanager is sending duplicate alerts. What are the possible causes?
-
-### Service Discovery & Exporters
-159. Explain Kubernetes service discovery in Prometheus — how does `kubernetes_sd_configs` work?
-160. What is a relabeling rule in Prometheus and what is the difference between `relabel_configs` and `metric_relabel_configs`?
-161. What is the Node Exporter and what can't it collect that requires a custom exporter?
-162. Explain the Blackbox exporter — what types of probes does it support and what is it used for?
-
-### HA & Scaling
-163. How do you run Prometheus in HA mode? What is the problem with simple active-active?
-164. What is Thanos and what components does it add to a Prometheus stack?
-165. What is the difference between Thanos and Cortex/Mimir for long-term storage?
-
-### Grafana & LGTM Stack
-166. What is the difference between Grafana data sources and panels? How does templating work?
-167. Explain Grafana Loki's architecture — how does it differ from Elasticsearch for log storage?
-168. What is Grafana Tempo and how does it integrate with Prometheus and Loki for correlation?
-169. Your Grafana dashboard is slow to load. What are the possible causes and fixes?
+Explain the difference between ArgoCD's `Automated` sync with `selfHeal: true` vs `selfHeal: false`, and describe the exact sequence of events when a developer manually patches a Deployment directly in the cluster using `kubectl`. Under what production conditions would you intentionally disable self-healing, and what compensating controls would you put in place?
 
 ---
 
-## 7. Linux & Bash
+## Q8 | AWS → ECS & Fargate | 2AM Fire
 
-### Process Management
-170. What is the difference between a process and a thread in Linux? How does the kernel schedule them?
-171. Explain zombie processes — what causes them, how do you find them, and are they harmful?
-172. What is `nice` vs `ionice`? When would you adjust process priority in production?
-173. Explain Linux OOM killer — how does it choose which process to kill?
-174. What is `cgroups` and how does Kubernetes use it to enforce resource limits?
-
-### Bash Scripting
-175. What is the difference between `$()` and backticks in Bash? Are there cases where they behave differently?
-176. Explain `set -e`, `set -u`, `set -o pipefail` — what does each do and why should all three be in production scripts?
-177. What is the difference between `[[ ]]` and `[ ]` in Bash conditionals?
-178. How do you handle signals in a Bash script? Write a trap that cleans up temp files on EXIT.
-179. Explain process substitution `<()` and give a use case where it's necessary.
-
-### Networking
-180. What does `ss -tlnp` show that `netstat` doesn't? What do the flags mean?
-181. Walk me through using `tcpdump` to capture HTTP traffic on port 8080 and write it to a file.
-182. What is `conntrack` and why do you need to understand it when debugging iptables rules?
-183. Explain the difference between `ping`, `traceroute`, and `mtr`. What does each tell you?
-
-### Storage & I/O
-184. What is `inode` exhaustion and how do you diagnose it? Can a disk be full with free space showing?
-185. Explain `iostat` output — what is `await`, `svctm`, and `%util`? What does 100% util actually mean?
-186. What is the Linux page cache? How does it affect memory usage reporting?
-187. Explain `lsof` and give three production use cases where it's essential.
-
-### Performance & Observability
-188. Explain the USE method for performance analysis. What does Utilization, Saturation, and Errors mean for CPU?
-189. What is `perf` and what types of performance problems can it diagnose that `top` cannot?
-190. Explain `strace` vs `ltrace`. When would you use each and what are the performance implications?
-191. What is `dmesg` and what types of issues appear there that won't show in application logs?
+At 2 AM your ECS Fargate service drops from 10 running tasks to 2. The service is behind an ALB. CloudWatch shows no recent deployment. Walk through the exact investigation: ECS service events, stopped task reasons, CloudWatch Container Insights, ALB target group health, and IAM task role permissions. What are the five most common root causes for silent task termination on Fargate and how do you distinguish between them?
 
 ---
 
-## 8. ArgoCD
+## Q9 | Kubernetes → Networking | Failure Mode
 
-### Core Concepts & Architecture
-192. Explain ArgoCD's reconciliation loop — how does it detect drift and what triggers a sync?
-193. What is the difference between ArgoCD Application `source` and `destination`?
-194. Explain ArgoCD's `health` status vs `sync` status — can an app be `Synced` but `Degraded`?
-195. What is the ArgoCD repo server and what happens if it goes down?
-
-### Sync & Deployment Patterns
-196. What is the difference between `prune` and `selfHeal` in ArgoCD sync policy?
-197. Explain ArgoCD sync waves and sync hooks — how do you control order of resource deployment?
-198. What is an ArgoCD `PreSync`, `Sync`, and `PostSync` hook? Give a database migration use case.
-199. How do you implement a canary deployment pattern using ArgoCD and Argo Rollouts?
-200. What is the App of Apps pattern? What are its limitations at scale?
-
-### ApplicationSets & Multi-Cluster
-201. What is an ApplicationSet and how does the `git` generator differ from the `cluster` generator?
-202. How do you manage secrets in ArgoCD — what are the options and tradeoffs (Sealed Secrets, ESO, Vault)?
-203. Explain ArgoCD multi-cluster deployment — how does ArgoCD authenticate to remote clusters?
-204. What happens during ArgoCD disaster recovery — what do you need to back up?
-
-### RBAC & Security
-205. Explain ArgoCD RBAC — how does it integrate with SSO (Dex) and what is a project policy?
-206. What is an ArgoCD AppProject and how does it restrict what an application can deploy?
+A Pod in namespace `frontend` cannot reach a Pod in namespace `backend` via its ClusterIP Service. Both Pods are running and their readiness probes pass. Describe every component in the packet path — iptables/IPVS rules, kube-proxy, CoreDNS, and the CNI plugin — and list at least five distinct causes of this failure with the exact `kubectl` and Linux commands that would confirm or rule out each one.
 
 ---
 
-## 9. Python Scripting
+## Q10 | GitHub Actions → Secrets & Security | Design Tradeoff
 
-### Automation & AWS
-207. Write a Python script that finds all EC2 instances tagged with `Env=prod` and stops any that have been running for more than 7 days without recent CPU activity.
-208. How do you handle AWS API pagination in Boto3? What happens if you don't handle it?
-209. Explain Boto3 session vs client vs resource. When would you use each?
-210. Write a Python function that retries an AWS API call with exponential backoff on `ThrottlingException`.
-211. How do you assume a cross-account IAM role in Boto3 and use it to list S3 buckets?
-
-### Error Handling & Patterns
-212. What is the difference between `Exception` and `BaseException` in Python? When should you catch `BaseException`?
-213. Explain Python context managers — implement one using `__enter__`/`__exit__` for a temp directory.
-214. What is the difference between `subprocess.run`, `subprocess.Popen`, and `os.system`? Why is `os.system` dangerous?
-215. How do you parse and manipulate large JSON/CSV files in Python without loading them into memory?
-
-### CLI & Testing
-216. Compare `argparse`, `click`, and `typer` for building CLI tools. When would you choose each?
-217. How do you mock AWS services in Python unit tests without making real API calls?
-218. What is the difference between `unittest.mock.patch` and `unittest.mock.MagicMock`?
-219. Explain Python's `asyncio` — when would async patterns help in a DevOps automation script?
+You need to allow GitHub Actions workflows in 15 repositories to push Docker images to ECR and deploy to EKS without storing long-lived AWS credentials in GitHub Secrets. Design the complete OIDC federation setup: the IAM OIDC provider configuration, the trust policy JSON, the permissions boundary, and the workflow YAML snippet that assumes the role. Explain what prevents a workflow in a forked repository from assuming the same role.
 
 ---
 
-## 10. ELK Stack
+## Q11 | ELK Stack → Elasticsearch Architecture | Conceptual
 
-### Elasticsearch Architecture
-220. Explain Elasticsearch sharding — what is a primary shard vs replica shard and what happens during a node failure?
-221. What is the difference between an Elasticsearch index and a data stream?
-222. Explain the Elasticsearch write path — from document indexing to it being searchable.
-223. What is a split-brain scenario in Elasticsearch and how does `minimum_master_nodes` (now `cluster.initial_master_nodes`) prevent it?
-224. Compare Elasticsearch to OpenSearch — what diverged after the fork?
-
-### Performance & Operations
-225. Your Elasticsearch cluster is red. Walk me through your diagnosis from first principles.
-226. What is heap pressure in Elasticsearch and what are the symptoms of too-small heap?
-227. Explain ILM phases (hot/warm/cold/frozen/delete) and the difference between `rollover` and `shrink` actions.
-228. What is force merge in Elasticsearch and why is it dangerous to run on active indices?
-229. Explain fielddata vs doc values. Why does enabling fielddata on text fields cause memory issues?
-
-### Querying & Mappings
-230. What is dynamic mapping in Elasticsearch and why should you disable it in production?
-231. Explain the difference between `term` query and `match` query. When does `term` fail on text fields?
-232. What is an Elasticsearch analyzer and what are the three components of an analysis chain?
-233. Write an Elasticsearch query that finds all logs with level=ERROR in the last hour, aggregated by service name.
-
-### Logstash & Beats
-234. Explain the Logstash pipeline — input, filter, output. What happens when the output is unavailable?
-235. What is the difference between Filebeat and Logstash? When do you need both?
-236. What is the Logstash persistent queue and why is it important for production?
-237. Explain Beats autodiscover for Kubernetes — how does it handle pod restarts and log rotation?
-
-### Security & Scaling
-238. Explain Elasticsearch X-Pack security — index-level vs document-level security.
-239. How do you scale Elasticsearch for write-heavy vs read-heavy workloads differently?
-240. What is a hot-warm-cold architecture in Elasticsearch and what hardware characteristics should each tier have?
+Explain how Elasticsearch distributes and replicates data using primary and replica shards. If a 5-node cluster has an index with 3 primary shards and 1 replica each, and 2 nodes fail simultaneously, describe the exact cluster state transition: which shards become unassigned, how the cluster health changes, whether writes are still accepted, and the recovery sequence when nodes rejoin. What is the minimum number of nodes needed to avoid split-brain with the default quorum settings?
 
 ---
 
-## Coding / Scripting Questions
+## Q12 | Python Scripting → Boto3 | Coding
 
-### Bash
-- Write a one-liner that finds all files modified in the last 24 hours under `/var/log` and counts lines containing `ERROR`.
-- Write a Bash script that takes a list of servers and checks if port 443 is open on each, with a 2-second timeout.
-- Write a script that rotates logs — compresses files older than 7 days, deletes files older than 30 days.
-- Write a Bash function that retries a command up to 5 times with exponential backoff.
-
-### Python
-- Write a Python function using Boto3 that lists all unattached EBS volumes across all regions.
-- Write a Python script that reads a CSV of EC2 instance IDs and tags them with `Owner` from a second column.
-- Write a Python function that polls an SQS queue, processes messages, and handles visibility timeout extension for long-running tasks.
-- Write a Python CLI tool using `argparse` that takes a Kubernetes namespace and lists all pods with their restart counts.
-
-### Terraform
-- Write a Terraform module that creates an S3 bucket with versioning, server-side encryption, and a lifecycle policy.
-- Write a `for_each` resource block that creates IAM users from a map of username → email.
-- Write a data source block that looks up an existing VPC by tag and uses its ID in a subnet resource.
-
-### Kubernetes YAML
-- Write a Deployment manifest with resource requests/limits, liveness/readiness probes, and a non-root security context.
-- Write a NetworkPolicy that allows ingress only from pods with label `app=frontend` in the same namespace.
-- Write a CronJob manifest that runs every 6 hours, keeps 3 successful jobs, deletes failed jobs immediately.
-- Write a HorizontalPodAutoscaler that scales between 2 and 10 replicas based on 70% CPU utilization.
-
-### GitHub Actions YAML
-- Write a workflow that builds a Docker image, pushes to ECR, and triggers only on changes to the `src/` directory.
-- Write a matrix workflow that runs tests on Python 3.9, 3.10, 3.11 in parallel.
-- Write a workflow that uses `concurrency` to cancel in-progress runs on the same branch but never cancel a deploy to prod.
-
-### PromQL
-- Write a query that shows the top 5 pods by memory usage in a namespace.
-- Write an alert rule that fires when a pod has restarted more than 5 times in the last hour.
-- Write a query that calculates the error rate percentage for a service broken down by endpoint.
-
-### ArgoCD YAML
-- Write an ArgoCD Application manifest that syncs from a Helm chart in a private Git repo with auto-sync and self-heal enabled.
-- Write an ApplicationSet using the `git` directory generator to create one Application per directory under `apps/`.
+Write a Python script using Boto3 that finds all EC2 instances across all AWS regions that have been stopped for more than 30 days (using the `StateTransitionReason` field or CloudTrail), tags them with `stale=true` and `stale_since=<date>`, and outputs a CSV report with columns: `region`, `instance_id`, `instance_type`, `name_tag`, `stopped_since`, `estimated_monthly_savings`. The script must handle pagination, rate limiting with exponential backoff, and credential errors gracefully.
 
 ---
 
-*Total: 240+ questions across 10 domains*
-*Coding questions: 30+ covering Bash, Python, Terraform, K8s YAML, GitHub Actions, PromQL, ArgoCD*
+## Q13 | Terraform → Modules | Design Tradeoff
+
+Your team has a monolithic Terraform root module with 500 resources covering networking, compute, and databases for three environments. Describe the tradeoffs of three refactoring strategies: (1) environment-based workspaces, (2) separate state files per layer with remote state data sources, and (3) Terragrunt with DRY configurations. Address state blast radius, dependency management, plan performance, and team collaboration. Which approach scales best to 10 teams and 20 environments?
+
+---
+
+## Q14 | Kubernetes → Security | Config
+
+Write a complete Kubernetes PodSecurityPolicy (or Pod Security Admission configuration for Kubernetes 1.25+) that enforces: non-root user execution, read-only root filesystem, dropped ALL capabilities with only `NET_BIND_SERVICE` added back, no privilege escalation, and seccomp profile `runtime/default`. Show both the policy/config YAML and a sample Pod spec that satisfies it, and one that would be rejected with the reason.
+
+---
+
+## Q15 | AWS → Observability | 2AM Fire
+
+At 2 AM a CloudWatch alarm fires on `5XXErrorRate > 5%` for your API Gateway. Your downstream Lambda functions show no errors in their logs. Walk through the full investigation: API Gateway access logs vs execution logs, Lambda destination vs CloudWatch Logs Insights queries, X-Ray traces, and the difference between integration errors and gateway errors. Provide the exact CloudWatch Logs Insights query you'd run to identify which endpoints are failing and the HTTP status code distribution.
+
+---
+
+## Q16 | CI/CD & Jenkins → Architecture | Design Tradeoff
+
+Compare Jenkins with ephemeral agent pods on Kubernetes (using the Kubernetes plugin) versus a self-hosted GitHub Actions runner fleet on EC2 Auto Scaling Groups for a build system that handles 500 concurrent builds with Docker-in-Docker requirements. Address agent startup latency, Docker socket security, resource bin-packing, secret management, and operational toil. Under what circumstances would you prefer the Jenkins approach in 2024?
+
+---
+
+## Q17 | Linux & Bash → Scripting | Coding
+
+Write a Bash script that monitors a directory for files matching `*.log` older than 24 hours, compresses them with gzip preserving the original filename and timestamp, moves them to a dated archive subdirectory (`./archive/YYYY-MM-DD/`), and logs each operation with a timestamp to `/var/log/log_archiver.log`. The script must be idempotent, handle filenames with spaces, and send a summary email via `sendmail` if more than 100 files were archived in a single run. Include a `--dry-run` flag.
+
+---
+
+## Q18 | ArgoCD → ApplicationSets | Conceptual
+
+Explain how ArgoCD ApplicationSets work and describe the difference between the `List`, `Cluster`, `Git`, and `Matrix` generators. Give a concrete example of using the `Matrix` generator to deploy a microservice to every combination of 5 clusters × 3 environments from a single ApplicationSet manifest. What happens to child Applications when the ApplicationSet is deleted, and how do you control this behavior?
+
+---
+
+## Q19 | AWS → RDS & Databases | Failure Mode
+
+Your RDS Aurora PostgreSQL Multi-AZ cluster undergoes an unplanned failover. Describe the exact sequence: what triggers automatic failover, how long the DNS TTL affects application reconnection, how the writer endpoint changes, and what happens to in-flight transactions. Your application uses a connection pool (PgBouncer). What connection pool settings determine whether applications recover automatically vs hang indefinitely? What CloudWatch metrics would you alarm on to detect prolonged failover?
+
+---
+
+## Q20 | Kubernetes → Workloads | Debug
+
+A Deployment has `replicas: 3` but only 1 Pod is consistently in `Running` state; the other 2 cycle between `Pending` and `ContainerCreating`. The container image exists in the registry. Provide the exact `kubectl` commands to diagnose this, what output from `kubectl describe pod`, `kubectl get events`, and node-level `crictl` commands would reveal, and walk through the five most likely causes: image pull secrets, resource quotas, node taints, PVC binding failures, and init container failures.
+
+---
+
+## Q21 | Prometheus & Grafana → High Availability | Design Tradeoff
+
+You need to run Prometheus in a highly available configuration for a 2000-node Kubernetes cluster generating 5 million active time series. Compare three approaches: (1) Prometheus with Thanos sidecar + object storage, (2) Prometheus with Cortex/Mimir remote write, and (3) Victoria Metrics cluster. For each, address: deduplication of metrics from redundant Prometheus instances, long-term storage cost, query federation, and the operational complexity of the compaction layer. Which would you choose and why?
+
+---
+
+## Q22 | GitHub Actions → Monorepo Patterns | Config
+
+Write a complete GitHub Actions workflow YAML for a monorepo containing services at `services/auth/`, `services/payments/`, and `services/notifications/`. The workflow must: (1) detect which service directories changed using `dorny/paths-filter`, (2) run service-specific tests only for changed services in parallel, (3) build and push Docker images with `sha` and `latest` tags only for changed services, and (4) trigger deployment only when running on `main`. Include proper job dependencies and matrix strategy.
+
+---
+
+## Q23 | ELK Stack → Index Lifecycle Management | Scenario
+
+Your Elasticsearch cluster stores 90 days of application logs across 50 indices totaling 8TB. Hot nodes (NVMe SSD) are at 85% capacity. You need to implement ILM to: move indices to warm tier (HDDs) after 7 days, shrink shards from 5 to 1 after moving to warm, force-merge to 1 segment, and delete after 90 days. Write the complete ILM policy JSON and index template that applies it, and explain what happens to an index that is currently mid-rollover when you apply the new policy.
+
+---
+
+## Q24 | AWS → IAM & Security | Conceptual
+
+Explain the evaluation logic AWS uses to determine whether an API call is allowed or denied, considering: SCPs at the organization level, permission boundaries on the IAM role, identity-based policies on the role, resource-based policies on the target resource, and VPC endpoint policies. Give an example where all five layers are relevant simultaneously (e.g., an EC2 instance with an instance profile trying to write to an S3 bucket in another account), and trace through exactly how AWS evaluates the allow/deny decision.
+
+---
+
+## Q25 | Terraform → CI/CD Integration | Config
+
+Write a complete GitLab CI or GitHub Actions pipeline configuration for Terraform that implements: (1) `terraform validate` and `tflint` on every PR, (2) `terraform plan` with output stored as a PR comment using `tfcmt`, (3) manual approval gate before `terraform apply`, (4) automatic state unlock if a pipeline is cancelled mid-apply, and (5) Sentinel or OPA policy checks before apply. Show the complete YAML and explain how you handle the Terraform state lock during the approval wait period.
+
+---
+
+## Q26 | Kubernetes → Storage | Failure Mode
+
+A StatefulSet with 3 replicas uses PersistentVolumeClaims backed by AWS EBS volumes (gp3). The node hosting Pod `stateful-app-1` is terminated by the ASG. Describe the exact sequence: how the PVC detaches from the old node, the multi-attach prevention issue unique to EBS, how long `volumeattachmenttimedout` can block the Pod from starting on a new node, and what Kubernetes node lifecycle controllers are involved. What specific EKS node termination handler configuration prevents a 10-minute recovery window?
+
+---
+
+## Q27 | Python Scripting → REST APIs | Coding
+
+Write a Python class `K8sAuditAnalyzer` that authenticates to the Kubernetes API using a kubeconfig file or in-cluster service account (auto-detecting which), streams audit log events from the API server, filters for events where `verb` is `delete` and `resource` is `secrets`, and writes matching events to both a local JSON file and posts them to a Slack webhook. The class must handle connection drops with automatic reconnection, and the Slack posting must be rate-limited to max 1 message per 5 seconds. Include proper type hints and unit tests using `unittest.mock`.
+
+---
+
+## Q28 | ArgoCD → Multi-Cluster | Scenario
+
+You manage 6 EKS clusters across 3 AWS accounts (dev, staging, prod) using a single ArgoCD instance running in the management account. Describe the complete architecture: how ArgoCD authenticates to remote clusters using IRSA or kubeconfig secrets, how you structure ApplicationSets to deploy to correct clusters based on environment labels, and what happens when ArgoCD's connection to a remote cluster is interrupted mid-sync. What RBAC model prevents a developer with access to dev ApplicationSets from accidentally deploying to prod?
+
+---
+
+## Q29 | AWS → Cost Optimization | Design Tradeoff
+
+Your AWS bill for EC2 and EKS worker nodes is $80k/month. Identify and quantify the top 5 cost optimization levers: Savings Plans vs Reserved Instances vs Spot for EKS node groups, Karpenter vs Cluster Autoscaler bin-packing efficiency, right-sizing via Compute Optimizer, gp2 to gp3 volume migration, and NAT Gateway data transfer reduction via VPC endpoints. For each, describe the implementation risk, potential savings percentage, and the exact AWS CLI or API calls to gather the data needed to make the decision.
+
+---
+
+## Q30 | Linux & Bash → Text Processing | Coding
+
+Write a Bash script that takes an nginx access log file as input and produces a report showing: (1) top 20 IPs by request count with their percentage of total traffic, (2) HTTP status code distribution as a bar chart using ASCII, (3) top 10 slowest endpoints by average response time (assuming log format includes `$request_time`), and (4) requests per minute as a time-series for the last hour. The script must work with log files larger than 10GB without loading the entire file into memory. Use only standard Unix tools (awk, sed, sort, uniq).
+
+---
+
+## Q31 | Kubernetes → Istio & Service Mesh | Conceptual
+
+Explain how Istio's Envoy sidecar proxy intercepts network traffic without modifying application code. Describe the iptables rules injected by the init container, how mTLS is negotiated between two Pods both with sidecars, what happens to traffic from a Pod that does NOT have a sidecar injected, and how `PeerAuthentication` in `STRICT` mode affects this. If a service mesh operator disables sidecar injection for a namespace, what are the security implications for mTLS and traffic policy enforcement?
+
+---
+
+## Q32 | CI/CD & Jenkins → Plugins & Scaling | Failure Mode
+
+Your Jenkins controller pod in Kubernetes runs out of heap memory and crashes during peak hours. Upon restart, several builds are stuck in `BUILDING` state with their agent pods still running. Describe: (1) how Jenkins recovers build state from its `JENKINS_HOME`, (2) what happens to the orphaned agent pods and how to clean them up, (3) how to tune JVM heap settings for a Kubernetes-deployed Jenkins, and (4) the architectural change (Jenkins Configuration as Code + ephemeral agents) that eliminates this class of failure permanently.
+
+---
+
+## Q33 | ELK Stack → Logstash | Debug
+
+The following Logstash pipeline config is dropping ~15% of log events silently and causing `pipeline.workers` to spike to 100% CPU. Identify all bugs and performance issues, explain the root cause of each, and provide the corrected configuration:
+
+```ruby
+input {
+  kafka {
+    bootstrap_servers => "kafka:9092"
+    topics => ["app-logs"]
+    codec => "json"
+    consumer_threads => 1
+  }
+}
+filter {
+  grok {
+    match => { "message" => "%{TIMESTAMP_ISO8601:timestamp} %{LOGLEVEL:level} %{GREEDYDATA:msg}" }
+  }
+  date {
+    match => [ "timestamp", "ISO8601" ]
+    timezone => "UTC"
+  }
+  if [level] == "DEBUG" {
+    drop { }
+  }
+  mutate {
+    remove_field => ["message", "timestamp"]
+    gsub => ["msg", "\n", " "]
+  }
+  ruby {
+    code => "event.set('hash', event.to_hash.to_s.hash)"
+  }
+}
+output {
+  elasticsearch {
+    hosts => ["elasticsearch:9200"]
+    index => "logs-%{+YYYY.MM.dd}"
+    template_overwrite => true
+  }
+}
+```
+
+---
+
+## Q34 | Prometheus & Grafana → Alerting | Scenario
+
+Your on-call rotation receives 200+ Prometheus alerts per week, 85% of which are either flapping (firing and resolving within minutes) or symptomatic (same root cause triggering 20 different alerts). Design a complete alert noise reduction strategy covering: `for` duration tuning, alert grouping in Alertmanager, inhibition rules to suppress symptoms when the root cause fires, routing based on severity and team ownership, and silence management automation. Provide the Alertmanager YAML for a concrete example involving a database being down triggering alerts in 5 upstream services.
+
+---
+
+## Q35 | AWS → Lambda & Serverless | Failure Mode
+
+A Lambda function processing SQS messages starts seeing high `IteratorAge` on its DLQ. The function's error rate in CloudWatch is near zero, but messages are not being processed. Explain the possible causes: Lambda concurrency throttling and how reserved vs provisioned concurrency interact with SQS triggers, the SQS visibility timeout vs Lambda timeout interaction, Lambda VPC cold start delays causing SQS polling to back off, and the `maxReceiveCount` on the source queue. Provide the exact CloudWatch metrics and SQS queue attributes you'd inspect to isolate the cause.
+
+---
+
+## Q36 | Kubernetes → RBAC | Config
+
+Write Kubernetes RBAC manifests (ServiceAccount, ClusterRole or Role, and binding) for three personas: (1) a CI/CD bot that can create/update/delete Deployments, Services, and ConfigMaps in the `production` namespace but cannot read Secrets, (2) a read-only auditor that can list all resources across all namespaces but cannot exec into Pods, and (3) a namespace admin for `staging` that has full control over that namespace only but cannot escalate privileges by creating new RoleBindings that grant more than they already have. Explain how the escalation prevention works.
+
+---
+
+## Q37 | Terraform → Advanced Patterns | Coding
+
+Write a Terraform module in HCL that provisions an EKS cluster with: a managed node group that uses a launch template for custom AMI and user data, IRSA (IAM Roles for Service Accounts) for a given service account name and namespace, and an aws-auth ConfigMap entry for a given IAM role ARN. The module must accept a `var.environment` variable and use `lifecycle { prevent_destroy = true }` on the cluster resource only in production. Include `output` blocks for cluster endpoint, OIDC provider ARN, and node group role ARN. Use `for_each` for managing multiple node groups passed as a map variable.
+
+---
+
+## Q38 | GitHub Actions → Self-Hosted Runners | Design Tradeoff
+
+You are migrating from GitHub-hosted runners to self-hosted runners on EC2 for compliance reasons (data must not leave your VPC). Compare two architectures: (1) persistent EC2 instances with a runner daemon using `--replace-existing-runner-with-same-name` for hot-standby, versus (2) ephemeral runners using the `actions/actions-runner-controller` (ARC) on EKS with spot instances. Address: runner registration token rotation, job isolation between tenants, autoscaling latency, cost model, and the security implications of `ACTIONS_RUNNER_HOOK_JOB_STARTED`.
+
+---
+
+## Q39 | Linux & Bash → Networking | 2AM Fire
+
+At 2 AM you receive alerts that a Linux host cannot reach external endpoints, but internal cluster traffic is fine. Other hosts on the same subnet are unaffected. Run through your exact diagnostic sequence: checking routing table with `ip route`, testing ICMP vs TCP (`ping` vs `nc`/`curl`), inspecting iptables chains (`INPUT`, `OUTPUT`, `FORWARD`, `POSTROUTING`), checking for asymmetric routing via `ip rule`, DNS resolution with `dig` vs `/etc/resolv.conf`, and identifying if a container networking stack (Docker bridge, CNI) has corrupted the host network namespace.
+
+---
+
+## Q40 | ELK Stack → Query DSL | Coding
+
+Write an Elasticsearch Query DSL JSON body that: (1) retrieves log documents from the past 6 hours where `level` is `ERROR` or `FATAL`, (2) excludes documents where `service` matches the pattern `health-check-*`, (3) must contain the phrase "connection refused" or "timeout" in the `message` field, (4) aggregates results by `service` with a sub-aggregation for `error_code`, (5) returns only the top 5 services by error count with each service's top 3 error codes. Include source filtering to return only `timestamp`, `service`, `level`, and `message` fields.
+
+---
+
+## Q41 | ArgoCD → Secrets Management | Design Tradeoff
+
+ArgoCD Git repositories cannot store Kubernetes Secret manifests in plaintext. Compare four secrets management approaches for GitOps: (1) Sealed Secrets (Bitnami), (2) External Secrets Operator with AWS Secrets Manager, (3) Vault Agent Injector with AppRole authentication, and (4) SOPS with AWS KMS. For each, evaluate: the threat model (what happens if the Git repo is compromised), key rotation UX, operator complexity, and behavior when the secrets backend is temporarily unavailable. Which approach handles ephemeral environments (created/destroyed per PR) most gracefully?
+
+---
+
+## Q42 | AWS → SQS & SNS | Scenario
+
+You have an SNS topic fanning out to 8 SQS queues consumed by different microservices. One consumer starts processing messages at 1/10th the normal rate due to a slow downstream database. The SQS queue for that consumer grows to 500,000 messages. Describe the cascading effects: SNS delivery retry behavior, the impact of message retention period, how SQS message visibility timeout interacts with slow consumers, whether backpressure propagates to the publisher, and the architectural changes (dead-letter queues, consumer scaling, queue-depth-based autoscaling using CloudWatch + KEDA) that prevent this scenario.
+
+---
+
+## Q43 | Kubernetes → Autoscaling | Conceptual
+
+Explain the interaction between the Horizontal Pod Autoscaler (HPA), Vertical Pod Autoscaler (VPA), and Cluster Autoscaler (CA). Describe the race condition that occurs when HPA scales up Pods but CA hasn't yet provisioned nodes (pending pods), how VPA admission webhook conflicts with HPA when both target CPU, the `minReplicas` implication during a VPA in-place update, and how Karpenter's consolidation behavior can evict Pods that HPA just scaled up. Under what conditions do all three autoscalers working simultaneously cause oscillation?
+
+---
+
+## Q44 | Python Scripting → Error Handling & Testing | Coding
+
+Write a Python module `ecs_deployer.py` with a function `deploy_service(cluster: str, service: str, image_uri: str, wait_timeout: int = 300) -> dict` that: (1) updates an ECS service's task definition with the new image URI, (2) triggers a deployment, (3) polls the service's deployment status every 10 seconds until the deployment completes or times out, (4) returns a dict with `status`, `duration_seconds`, `new_task_def_arn`, and `failed_task_arns`. Write corresponding pytest tests that mock Boto3 calls, test the timeout behavior, test partial failure (some tasks fail to start), and verify the returned dict schema. No external libraries beyond `boto3` and `pytest`.
+
+---
+
+## Q45 | CI/CD & Jenkins → Modern CI/CD Ecosystem | Design Tradeoff
+
+Your organization is evaluating replacing Jenkins with one of: GitHub Actions, GitLab CI, Tekton, or Argo Workflows for a platform serving 500 developers building 200 microservices with complex DAG-style build pipelines (some builds fan out to 50 parallel jobs and fan back in). Evaluate each option on: pipeline-as-code expressiveness, DAG support, artifact caching, secrets management, self-hosted runner security model, and vendor lock-in. What are the hidden migration costs when moving 300 existing Jenkins pipelines?
+
+---
+
+## Q46 | Kubernetes → CRDs & Operators | Conceptual
+
+Explain the Kubernetes Operator pattern: how a custom controller uses the informer-reflector-workqueue architecture to reconcile desired state in a CRD with actual cluster state. Describe what happens when the reconcile loop returns an error, how exponential backoff is implemented, what `Generation` vs `ResourceVersion` vs `ObservedGeneration` mean in a CRD status subresource, and why storing derived/computed state in the CRD spec (rather than status) is an antipattern. Give a concrete example of a reconcile loop that could cause infinite churn if not implemented carefully.
+
+---
+
+## Q47 | AWS → EKS | Config
+
+Write the complete `eksctl` config file or Terraform + Helm combination to provision an EKS cluster with: (1) private API server endpoint only, (2) managed node groups using Bottlerocket AMI with IMDSv2 enforced and instance metadata hop limit set to 1, (3) IRSA enabled with the OIDC provider, (4) VPC CNI with custom networking to use secondary CIDR for Pod IPs, (5) aws-auth ConfigMap granting access to two IAM roles (read-only and admin), and (6) cluster logging enabled for `api`, `audit`, `authenticator`, and `controllerManager`. Show the complete config.
+
+---
+
+## Q48 | Prometheus & Grafana → Instrumentation | Coding
+
+Write a Python Flask application that exposes Prometheus metrics including: (1) a `Counter` for HTTP requests labeled by `method`, `endpoint`, and `status_code`, (2) a `Histogram` for request duration with custom buckets `[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5]` labeled by `endpoint`, (3) a `Gauge` that reflects the current number of active database connections updated via a background thread every 30 seconds, and (4) an `Info` metric exposing app version and git commit SHA. The `/metrics` endpoint must be excluded from the request counter and duration histogram. Use the official `prometheus_client` library.
+
+---
+
+## Q49 | Linux & Bash → Storage & I/O | Scenario
+
+A production database host shows periodic latency spikes every 5 minutes lasting 30 seconds each. The application team reports random slow queries correlating exactly with the spikes. Describe your investigation: using `iostat -x 1`, `iotop`, `blktrace`/`blkparse`, `dmesg` for I/O errors, checking for LVM snapshot activity, identifying write-back cache pressure with `/proc/sys/vm/dirty_ratio`, and distinguishing between filesystem-level issues (ext4 journal commits, XFS checkpointing) vs hardware-level issues (disk firmware, RAID rebuild). What specific output would confirm each hypothesis?
+
+---
+
+## Q50 | ArgoCD → Rollbacks | 2AM Fire
+
+At 2 AM a bad deployment reaches production via ArgoCD. The application is throwing 500 errors. You need to rollback immediately. Walk through the exact steps: using `argocd app history`, `argocd app rollback`, understanding why ArgoCD rollback and GitOps philosophy conflict, what happens to the Git repo after a rollback (is it still ahead of cluster state?), how `selfHeal: true` will immediately re-apply the broken version if you don't also update Git, and the procedure for a safe rollback that doesn't fight the reconciler. Include the exact CLI commands.
+
+---
+
+## Q51 | AWS → CloudFront & CDN | Failure Mode
+
+Your CloudFront distribution starts returning stale content 48 hours after you deployed new static assets to S3. The S3 bucket shows the new files. Describe every caching layer involved: CloudFront edge cache TTL vs origin cache-control headers vs S3 object metadata, how CloudFront's `Cache-Control: max-age` and `s-maxage` differ, what happens when you issue an invalidation vs just update the file, how versioned filenames eliminate this problem entirely, and why `/*` invalidations cost money and degrade CloudFront performance. Include the exact AWS CLI command to create a targeted invalidation.
+
+---
+
+## Q52 | GitHub Actions → Observability | Scenario
+
+Your GitHub Actions workflows are becoming unreliable: jobs randomly fail with no clear error, workflow durations vary by 300% between identical runs, and you have no visibility into which step consumes most time. Design a complete observability solution: using `actions/github-script` to post job summaries, exporting step timings to a custom Prometheus pushgateway via `curl`, creating a Grafana dashboard tracking p95 workflow duration per repository and workflow name, and setting up alerting when any workflow's p95 exceeds 2× its historical baseline. Include the step-level YAML needed to instrument an existing workflow.
+
+---
+
+## Q53 | Kubernetes → Pod Disruption & Eviction | Design Tradeoff
+
+Explain the difference between a PodDisruptionBudget (PDB), node eviction via the kubelet (eviction manager), preemption by the scheduler, and manual deletion. Your stateful application has a PDB with `minAvailable: 2` and 3 replicas. Describe what happens when: (1) you run `kubectl drain` on a node, (2) the node runs out of memory and the eviction manager kicks in, (3) a higher-priority Pod is scheduled and needs the node's resources. In which of these three scenarios does the PDB protect your application? Where are the gaps?
+
+---
+
+## Q54 | ELK Stack → Elasticsearch Sharding | Design Tradeoff
+
+You are designing an Elasticsearch index strategy for a high-cardinality logging use case: 50 microservices each generating 100,000 log events/minute, events must be searchable for 30 days, and queries are always scoped to a single service and time window. Compare three indexing strategies: (1) one index per service per day (1,500 indices), (2) one index per day with routing by service, and (3) data streams with rollover based on size. Address: shard count explosion, cross-shard query overhead, index template management, ILM compatibility, and Elasticsearch's cluster state memory cost per shard (roughly 10KB/shard in master heap).
+
+---
+
+## Q55 | Terraform → Lifecycle Rules | Debug
+
+The following Terraform configuration causes a perpetual diff on every `terraform plan` even though the infrastructure was not changed. Identify all issues, explain why each causes a perpetual diff, and provide the corrected code:
+
+```hcl
+resource "aws_security_group" "web" {
+  name        = "web-sg"
+  description = "Web security group"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "web-sg"
+    LastUpdated = timestamp()
+    Environment = var.environment
+  }
+}
+
+resource "aws_instance" "web" {
+  ami           = data.aws_ami.latest.id
+  instance_type = "t3.medium"
+  user_data     = <<-EOF
+    #!/bin/bash
+    echo "Hello World" > /tmp/test.txt
+  EOF
+
+  root_block_device {
+    volume_size = 20
+  }
+
+  lifecycle {
+    ignore_changes = [ami]
+  }
+}
+
+resource "aws_autoscaling_group" "web" {
+  desired_capacity = 3
+  max_size         = 10
+  min_size         = 1
+
+  tag {
+    key                 = "Name"
+    value               = "web-asg-instance"
+    propagate_at_launch = true
+  }
+}
+```
+
+---
+
+## Q56 | Python Scripting → Async Patterns | Coding
+
+Write an async Python script using `asyncio` and `aiohttp` that checks the health of 200 internal service endpoints (provided as a list of URLs in a YAML config file) concurrently with a max concurrency of 20, times out individual requests after 5 seconds, retries failed requests up to 3 times with jitter-based backoff, and produces a structured JSON report with: `url`, `status` (`healthy`/`degraded`/`unreachable`), `response_time_ms`, `http_status_code`, `error_message`. The script must complete within 60 seconds regardless of how many services are degraded. Include a `--alert-webhook` flag that POSTs unhealthy services to a Slack webhook.
+
+---
+
+## Q57 | AWS → DynamoDB | Conceptual
+
+Explain the internal architecture of DynamoDB: partition key hashing to partition routing, the role of DynamoDB's storage nodes and log-structured merge trees, how conditional writes achieve optimistic concurrency, and the difference between eventually consistent and strongly consistent reads at the storage layer. Describe a hot partition scenario: what causes it, how DynamoDB's adaptive capacity works, what the `ConsumedCapacityUnits` vs `ProvisionedThroughputExceededException` metrics reveal, and what partition key design changes permanently resolve it.
+
+---
+
+## Q58 | Kubernetes → Observability | Config
+
+Write a complete Prometheus ServiceMonitor CRD manifest and corresponding Kubernetes Service manifest to scrape metrics from a Deployment `payment-service` in namespace `payments`. The application exposes metrics on port 8080 at path `/internal/metrics`, requires a bearer token (stored in a Secret `payment-service-metrics-token`) for authentication, and should be scraped every 15 seconds with a 10-second scrape timeout. Also write the PrometheusRule CRD manifest with an alerting rule that fires when `payment_processing_errors_total` rate over 5 minutes exceeds 0.1 per second.
+
+---
+
+## Q59 | CI/CD & Jenkins → Design Patterns | Coding
+
+Write a Jenkins shared library (`vars/deployToEks.groovy`) that can be called from Jenkinsfiles as `deployToEks(cluster: 'prod-us-east-1', namespace: 'payments', imageTag: params.IMAGE_TAG)`. The library must: (1) authenticate to EKS using `aws eks update-kubeconfig`, (2) run a Helm upgrade with `--atomic` and `--timeout 5m`, (3) on failure, capture the last 50 log lines from the failed Pod and post them as a Jenkins build artifact and a Slack notification, (4) on success, post a deployment notification with the image tag and Git commit SHA to Slack. Handle missing kubeconfig and Helm binary gracefully.
+
+---
+
+## Q60 | Prometheus & Grafana → Loki & Logs | Scenario
+
+You are replacing ELK with the LGTM stack (Loki, Grafana, Tempo, Mimir) for a 100-node Kubernetes cluster. Loki is configured with a filesystem backend. One week in, Loki query performance degrades: simple label queries take 30+ seconds. Walk through the diagnosis: checking Loki's query planner logs, understanding how Loki's label index (TSDB) differs from full-text inverted indices, why high cardinality labels (`pod_name`, `trace_id`) in log streams destroy performance, the chunk cache hit rate, and why switching to object storage (S3) with a compactor improves this. What label cardinality limits would you enforce?
+
+---
+
+## Q61 | AWS → VPC & Transit Gateway | Design Tradeoff
+
+You are designing network connectivity for 20 AWS accounts across 4 regions, each account with 3 VPCs (dev/staging/prod). Compare: (1) VPC Peering mesh (requires N×(N-1)/2 peering connections), (2) Transit Gateway per region with peering between TGWs, and (3) AWS Cloud WAN with a global network policy. Address: route table management at scale, transitive routing limitations of VPC peering, bandwidth limits per attachment on TGW, the cost model (TGW attachment + data processing fees), and security segmentation via TGW route table domains. Which architecture supports adding a 21st account in under 30 minutes?
+
+---
+
+## Q62 | ArgoCD → Health Checks | Debug
+
+An ArgoCD Application shows `Degraded` health status even though all Pods are Running and Ready. The sync status shows `Synced`. Identify the possible causes: custom resource health checks not defined in `resource.customizations`, a Deployment's `availableReplicas` temporarily less than `replicas` during a rollout, a Job that completed successfully but ArgoCD interprets as failed, and a Hook resource that failed cleanup. Provide the ArgoCD `configmap` YAML to add a custom health check for a CRD `type: MyCustomResource` that returns `Healthy` when `.status.phase == "Ready"`.
+
+---
+
+## Q63 | Linux & Bash → Process Management | 2AM Fire
+
+At 2 AM a critical Java service on a Linux host enters a state where it consumes 100% CPU on all cores but processes no requests (all requests timeout). The JVM is running but unresponsive. Describe your exact response: getting a thread dump without killing the process (`kill -3` or `jstack`), using `jcmd` to diagnose GC pressure, using `top -H -p <pid>` to identify hot threads by TID, converting TID to hex for correlation with thread dump, identifying deadlocks vs GC storms vs infinite loops from the thread dump output, and making the kill/restart decision. What data do you preserve before restarting?
+
+---
+
+## Q64 | Kubernetes → Docker & Images | Design Tradeoff
+
+You are auditing your organization's Docker image build practices. 40% of production images are over 2GB and built on `ubuntu:latest`. Propose a complete image optimization strategy: multi-stage builds with distroless or scratch base images, layer ordering for cache efficiency, `.dockerignore` patterns, BuildKit secret mounts vs ARG for credentials, SBOM generation with `syft`, vulnerability scanning with `trivy` in CI, and image signing with `cosign`. For a Node.js web application, demonstrate the before/after Dockerfile showing the size reduction and the specific optimizations applied.
+
+---
+
+## Q65 | ELK Stack → Security & RBAC | Scenario
+
+Your Elasticsearch cluster is exposed to 50 application teams who should only see logs from their own services. Currently there is a single superuser used by all applications. Design the complete RBAC model using Elasticsearch native security: index-level privileges, document-level security (DLS) to filter by `service_name` field, field-level security (FLS) to hide `user.email` from non-admin roles, API key rotation strategy, and how Kibana Spaces map to Elasticsearch privileges. Show the Elasticsearch role JSON for an application team role that can read only their service's indices and cannot delete or modify mappings.
+
+---
+
+## Q66 | Python Scripting → File & OS Operations | Coding
+
+Write a Python script `k8s_log_collector.py` that accepts a Kubernetes namespace as a CLI argument and: (1) uses the `kubernetes` Python client to list all Pods, (2) for each Pod, streams the last 5000 lines of logs from each container using the async log streaming API, (3) writes logs to `./logs/<namespace>/<pod-name>/<container-name>.log`, (4) for Pods with multiple containers, collects all containers in parallel, (5) creates a compressed tarball `<namespace>-logs-<timestamp>.tar.gz` when complete, and (6) prints a summary table showing pod name, container count, log lines collected, and any containers that failed. Use `argparse` for CLI, handle `ApiException` with meaningful error messages.
+
+---
+
+## Q67 | AWS → SNS & EventBridge | Design Tradeoff
+
+Compare AWS SNS fan-out vs EventBridge event bus for routing events from a microservices platform where: 30 producers emit 15 different event types, 40 consumers need subset filtering (e.g., only `OrderCreated` events for orders over $1000 in the EU region), and event schema evolution must not break existing consumers. Address: SNS filter policy limits (5 filter conditions, limited operators) vs EventBridge rule pattern matching (content-based routing, `exists` checks, numeric ranges), schema registry and backward compatibility, dead-letter queue support, and the cost model at 100M events/day.
+
+---
+
+## Q68 | Kubernetes → Cluster Operations | 2AM Fire
+
+At 2 AM you receive alerts that `kube-apiserver` is returning 503s intermittently. `kubectl` commands succeed roughly 1 in 3 attempts. You have out-of-band SSH access to the control plane nodes. Walk through the diagnosis: checking apiserver Pod logs for connection refused vs timeout vs OOMKill, inspecting etcd cluster health (`etcdctl endpoint health`, `etcdctl endpoint status`), checking if etcd is experiencing leader elections via `etcdctl` metrics, identifying if apiserver is overwhelmed by checking `--max-requests-inflight` and `--max-mutating-requests-inflight` in current load, and the immediate remediation steps that don't require cluster downtime.
+
+---
+
+## Q69 | Terraform → Security | Config
+
+Write a Terraform configuration that provisions an S3 bucket for Terraform state storage with all security controls: versioning enabled, server-side encryption with a customer-managed KMS key (include the KMS key resource with automatic rotation), bucket policy that denies all access unless the request uses SSL and denies `s3:DeleteObject` except from a specific admin role ARN, S3 Block Public Access all four settings, access logging to a separate logging bucket, and a DynamoDB table for state locking. Parameterize the admin role ARN and the KMS key deletion window. Include all necessary IAM and KMS key policies.
+
+---
+
+## Q70 | Prometheus & Grafana → Exporters | Scenario
+
+Your organization runs 200 MySQL instances across RDS and self-managed EC2. You need to deploy the `mysqld_exporter` at scale: describe the deployment architecture for RDS instances (cannot install sidecar, must use network reachability), how you manage exporter credentials without hardcoding passwords (using AWS Secrets Manager and a credentials renewal script), how to configure the exporter's `--collect.*` flags to minimize performance impact on production databases, how Prometheus service discovery finds all 200 exporters via EC2 SD or Consul, and how you alert on replica lag, connection pool exhaustion, and slow query count using PromQL.
+
+---
+
+## Q71 | GitHub Actions → Migration | Scenario
+
+You are migrating 150 CircleCI pipelines to GitHub Actions. Each CircleCI config uses: orbs (reusable config packages), parallelism for test splitting, custom Docker executors, contexts for secrets, and approval jobs for production deployment gates. Map each CircleCI concept to its GitHub Actions equivalent, identify features that have no direct equivalent (specifically CircleCI's test splitting with `circleci tests split`), describe what you would build custom (a composite action or reusable workflow to replace a CircleCI orb), and create a migration risk matrix covering pipelines that use CircleCI's SSH debug feature and parallelism > 20.
+
+---
+
+## Q72 | Linux & Bash → Security & Permissions | Config
+
+Write a Bash script that hardens a fresh Ubuntu 22.04 server following CIS Level 1 benchmarks for these specific items: (1) disables root SSH login and password authentication, (2) configures `auditd` rules to log all writes to `/etc/passwd`, `/etc/shadow`, and `/etc/sudoers`, (3) sets `umask 027` system-wide, (4) restricts `cron` to only the `root` user, (5) enables and configures `ufw` to allow only ports 22, 80, and 443, (6) disables unused kernel modules (`usb-storage`, `cramfs`, `freevxfs`) via `/etc/modprobe.d/`, and (7) configures `sysctl` parameters for TCP SYN flood protection and ICMP redirect rejection. The script must be idempotent.
+
+---
+
+## Q73 | AWS → Kinesis & Streaming | Failure Mode
+
+A Kinesis Data Streams consumer (KCL-based) falls behind: `GetRecords.IteratorAgeMilliseconds` grows from 0 to 4 hours over 6 hours. The shard count is 20, and the consumer has 20 worker threads. Describe the failure analysis: how KCL distributes shards among workers, what causes one shard to "poison" a worker thread (slow deserialization, downstream write bottleneck), how KCL's lease stealing mechanism works and why it may not help if the problem is per-record processing time, the interaction between Kinesis's 7-day retention and iterator expiration, and the autoscaling remediation (resharding vs consumer parallelization via Enhanced Fan-Out).
+
+---
+
+## Q74 | Kubernetes → Troubleshooting | Debug
+
+A CronJob runs every 5 minutes and creates Jobs, but the Jobs are not running their Pods. The Jobs show status `Complete: 0/1` immediately after creation without any Pod appearing in `kubectl get pods`. Identify all the possible causes: `startingDeadlineSeconds` expiration causing the Job to immediately fail, `activeDeadlineSeconds` set to 0, the Job's Pod template having a `RestartPolicy` of `Always` (invalid for Jobs), the namespace having a `LimitRange` that prevents Pod scheduling, and a misconfigured `imagePullPolicy: Never` with the image not present on any node. Provide the exact `kubectl` commands to diagnose each case.
+
+---
+
+## Q75 | ArgoCD → Notifications | Config
+
+Write the complete ArgoCD notifications configuration (ConfigMap and Secret) to send Slack notifications for the following events: (1) application sync succeeded — include the app name, target revision (Git SHA), and author of the commit, (2) application health degraded — include the app name and a link to the ArgoCD UI, (3) sync failed — include the error message and the specific resources that failed. The Slack webhook URL must come from a Kubernetes Secret. Include the `subscriptions` annotation for an Application named `payment-service`. Show both the trigger definitions and the template YAML with Go templating for dynamic fields.
+
+---
+
+## Q76 | AWS → CloudFormation vs Terraform | Design Tradeoff
+
+A regulated financial services company is debating CloudFormation vs Terraform for their entire AWS infrastructure spanning 15 accounts and 3 regions. They require: audit trails for all infrastructure changes, policy enforcement (no public S3 buckets, required tags), drift detection, and integration with their ServiceNow ITSM for change management. Evaluate both on: state management model differences (CFN stack vs TF state file), CloudFormation StackSets vs Terraform workspaces for multi-account, CFN Hooks vs Sentinel/OPA for policy, and the specific scenario of managing AWS resources not yet supported by the provider. What would change your recommendation?
+
+---
+
+## Q77 | Python Scripting → Data Parsing & CLI Tools | Coding
+
+Write a Python CLI tool `awscost` using `click` that: (1) queries AWS Cost Explorer API for the last 30 days of costs grouped by `SERVICE` and `LINKED_ACCOUNT`, (2) supports `--output` flag with options `table` (rich terminal table), `csv`, and `json`, (3) supports `--threshold` flag to highlight services where spend increased more than X% versus the prior 30-day period, (4) supports `--forecast` flag to add a 30-day forecast using the Cost Explorer forecast API, and (5) caches results locally for 1 hour to avoid repeated API calls. The tool must work with AWS SSO profiles and handle the case where Cost Explorer data has up to 24-hour lag. Include proper `--help` text and error messages.
+
+---
+
+## Q78 | Kubernetes → EKS Specifics | 2AM Fire
+
+At 2 AM EKS nodes start failing to join the cluster. `kubectl get nodes` shows them as `NotReady`. The nodes boot successfully (EC2 console shows running) and you can SSH in. On the node, `journalctl -u kubelet` shows `Failed to get node info: nodes "ip-10-0-1-45.ec2.internal" is forbidden`. Walk through the investigation: checking the `aws-auth` ConfigMap for the node IAM role mapping, verifying the node's IAM instance profile, checking if the node's bootstrap script correctly called `aws eks update-kubeconfig`, confirming the IAM role has the `AmazonEKSWorkerNodePolicy` and `AmazonEC2ContainerRegistryReadOnly` managed policies, and the exact fix for each root cause.
+
+---
+
+## Q79 | ELK Stack → Beats & Data Collection | Config
+
+Write a complete Filebeat configuration to collect logs from: (1) Docker containers on the host using the `docker` input (auto-discover containers, add `container.name` and `container.image.name` metadata), (2) `/var/log/nginx/access.log` using the `nginx` module with custom log format parsing, (3) a multiline Java stack trace from `/var/log/myapp/app.log` that correctly reassembles lines starting with whitespace or `Caused by:` into single events. The output must go to Logstash on port 5044 with TLS mutual authentication (client certificate paths configurable via environment variables). Include the `setup.template` and `setup.ilm` configuration to auto-create the index template.
+
+---
+
+## Q80 | CI/CD & Jenkins → Security | Scenario
+
+A security team audit reveals that your Jenkins master has 15 global credentials including AWS access keys, GitHub tokens, and SSH private keys — all used by pipelines from different teams. A developer reports that a malicious Jenkinsfile could potentially exfiltrate credentials via `withCredentials` block and then make arbitrary HTTP calls. Design the complete remediation: Jenkins credential scoping to folders, using credentials IDs that cannot be enumerated without explicit permission, restricting `withCredentials` usage via Script Security plugin approved signatures, adding a Network policy to block outbound connections from build agents to non-approved endpoints, and audit logging for credential access.
+
+---
+
+## Q81 | AWS → Route 53 & DNS | Failure Mode
+
+Your application uses Route 53 health checks and DNS failover between a primary ALB in `us-east-1` and a secondary ALB in `us-west-2`. The primary region experiences a partial outage: the ALB is up but one of three AZs is degraded. Health checks show the primary as healthy (because 2/3 AZs respond). Users in the degraded AZ experience 30% of requests failing. Explain why Route 53 health checks failed to trigger failover, how you would configure more granular health checks (application-level checks using calculated health checks and individual endpoint health checks), the TTL implication during failover, and the Route 53 resolver query logging needed to verify failover is working.
+
+---
+
+## Q82 | Prometheus & Grafana → TSDB Internals | Conceptual
+
+Explain how Prometheus's TSDB stores time series data: the WAL (Write-Ahead Log) and its role in crash recovery, how data is organized into 2-hour in-memory chunks before being compacted to disk blocks, the block structure (`chunks/`, `index`, `tombstones`, `meta.json`), how the compaction process merges blocks to improve query performance and reclaim space from deleted series, and what `--storage.tsdb.retention.size` vs `--storage.tsdb.retention.time` means operationally. At what point does adding more `label cardinality` cause Prometheus OOM, and how do recording rules mitigate this?
+
+---
+
+## Q83 | Linux & Bash → Scheduling & Automation | Coding
+
+Write a Bash script `db_backup.sh` that: (1) connects to a PostgreSQL database using credentials from environment variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `PGPASSWORD`), (2) performs a `pg_dump` in custom format to a temp file, (3) encrypts the dump using `gpg --symmetric` with a passphrase from `GPG_PASSPHRASE` env var, (4) uploads the encrypted file to S3 at `s3://$BACKUP_BUCKET/postgres/$DB_NAME/$(date +%Y/%m/%d)/$DB_NAME-$(date +%H%M%S).dump.gpg` with server-side encryption, (5) verifies the upload by comparing `md5sum` of local file with S3 ETag, (6) deletes the temp file, and (7) exits with appropriate codes. Include error handling that cleans up temp files on failure.
+
+---
+
+## Q84 | Kubernetes → Network Policies | Config
+
+Write Kubernetes NetworkPolicy manifests to implement this security model for namespace `payments`: (1) deny all ingress and egress by default, (2) allow ingress to Pods labeled `app: payment-api` on port 8080 only from Pods labeled `app: api-gateway` in namespace `ingress`, (3) allow egress from `app: payment-api` to Pods labeled `app: postgres` in namespace `databases` on port 5432 only, (4) allow egress from all Pods in `payments` namespace to `kube-dns` (CoreDNS) on UDP/TCP port 53, (5) allow egress from `app: payment-api` to any external IP on port 443. Explain why DNS egress must be explicitly allowed and what breaks if you forget it.
+
+---
+
+## Q85 | AWS → Security Hub & GuardDuty | Scenario
+
+GuardDuty fires an alert: `UnauthorizedAccess:IAMUser/MaliciousIPCaller.Custom` for an IAM user making `AssumeRole` calls from a known malicious IP. You are the on-call security engineer. Describe the complete incident response: immediate containment (adding an explicit Deny policy vs deactivating access keys vs disabling the IAM user — tradeoffs of each), using CloudTrail to identify all API calls made in the 24 hours prior, checking for newly created IAM users, roles, or access keys that may indicate persistence, checking for S3 exfiltration via CloudTrail `GetObject` calls, and the post-incident steps to understand the initial access vector.
+
+---
+
+## Q86 | ArgoCD → App of Apps | Design Tradeoff
+
+Compare two ArgoCD patterns for managing 80 applications across 4 clusters: (1) App of Apps pattern where a root Application manages child Application manifests stored in Git, versus (2) ApplicationSets with a Git directory generator. For each, describe: how adding a new application works operationally, what happens when the parent App or ApplicationSet is accidentally deleted, how RBAC limits which teams can modify which applications, and how you handle applications with cross-cluster dependencies (e.g., a cert-manager Application must deploy before the application that uses its CRDs). Which pattern better supports a golden path IDP (Internal Developer Platform)?
+
+---
+
+## Q87 | Python Scripting → Subprocess & OS | Coding
+
+Write a Python module `helm_deployer.py` with a class `HelmDeployer` that wraps the `helm` CLI. It must implement: `upgrade_install(release, chart, namespace, values_files, set_values, dry_run=False)` that constructs and executes the `helm upgrade --install` command, captures both stdout and stderr separately, streams output to the logger in real-time (not buffered), returns a `DeployResult` dataclass with `returncode`, `stdout`, `stderr`, `duration_seconds`, and `release_info` (parsed from `helm get values --output json`). The class must validate that the `helm` binary exists at init time and raise a clear `HelmNotFoundError`. Include a context manager that automatically rolls back on exception. No shell=True.
+
+---
+
+## Q88 | AWS → MSK & Kafka | Failure Mode
+
+Your Amazon MSK cluster with 3 brokers and replication factor 3 has one broker fail (broker-3 goes offline). Kafka's partition leadership election begins. Describe: which partitions lose their leader and how long the election takes (unclean vs clean leader election), how the producer's `acks=all` (or `acks=-1`) behaves during the election window, the role of `min.insync.replicas` in determining whether producers can continue writing, how consumer groups detect the leader change and trigger rebalance, and what the MSK console shows during this period. After broker-3 restarts, how does partition reassignment back to the preferred leader work, and do you need to trigger it manually?
+
+---
+
+## Q89 | Kubernetes → Admission Controllers | Conceptual
+
+Explain the Kubernetes admission controller pipeline: the order in which mutating and validating admission webhooks fire relative to built-in admission plugins, how a `MutatingWebhookConfiguration` can inject a sidecar into every Pod, the `failurePolicy: Fail` vs `failurePolicy: Ignore` implication when the webhook server is down, the `namespaceSelector` and `objectSelector` fields and how they are used to exclude system namespaces, and how `reinvocationPolicy: IfNeeded` prevents infinite loops when one mutating webhook's output triggers another. What is the blast radius if an admission webhook with `failurePolicy: Fail` and `matchPolicy: Equivalent` is deployed cluster-wide with a bug?
+
+---
+
+## Q90 | CI/CD & Jenkins → Pipeline Optimization | Scenario
+
+Your CI pipeline for a monorepo takes 45 minutes end-to-end: 5 min checkout, 10 min dependency install, 15 min compile, 8 min unit tests, 7 min integration tests. Your team runs 50 builds/hour. Identify and implement optimizations: Gradle/Maven build cache with a remote cache server, Docker layer caching via `--cache-from` and BuildKit, incremental compilation detection using affected module analysis, parallelizing the unit and integration test stages, and pre-building a "dependencies layer" Docker image that only rebuilds when the lockfile changes. Provide before/after pipeline YAML and estimate the time reduction per stage with realistic assumptions.
+
+---
+
+## Q91 | ELK Stack → OpenSearch Differences | Design Tradeoff
+
+Your organization must decide whether to migrate from Elasticsearch 7.10 (OSS) to OpenSearch 2.x or upgrade to Elasticsearch 8.x. A key concern is that you use: cross-cluster replication, the anomaly detection plugin, `_security` API for RBAC, and Kibana dashboards built over 3 years. For each capability, state whether it is available in both, only in one, or incompatible at the API level. Describe the specific breaking changes in ES 8.x that require index migration (mappings, security model), and the specific OpenSearch divergences that prevent using official Elastic clients. What is the irreversible decision in this migration?
+
+---
+
+## Q92 | AWS → Auto Scaling & EC2 | 2AM Fire
+
+At 2 AM an Auto Scaling Group stops launching new instances. `DesiredCapacity` is 20, `InService` is 8. CloudWatch shows `GroupInServiceInstances` dropping. The ASG's activity history shows `Failed to launch instance: Value (subnet-xxxxxx) for parameter subnetId is invalid`. Walk through the investigation: why an ASG might have a subnet ID that no longer exists, what happens to the ASG when its launch template references a deleted AMI vs deleted subnet, how to update the ASG to use a valid subnet without downtime, whether existing instances are affected, and how to prevent this with `aws ec2 describe-subnets` checks in your Terraform pipeline.
+
+---
+
+## Q93 | Kubernetes → Taints, Tolerations & Affinity | Scenario
+
+You have a 50-node EKS cluster running mixed workloads. You need to: (1) dedicate 10 nodes (labeled `workload-type=gpu`) to GPU workloads only, (2) ensure a critical `payment-api` Deployment spreads across at least 3 AZs and never co-locates two replicas on the same node, (3) ensure a `log-collector` DaemonSet runs on ALL nodes including the GPU nodes, and (4) ensure a `batch-processor` Deployment prefers nodes in `us-east-1a` but can schedule elsewhere if unavailable. Write the complete YAML for the taint on GPU nodes, the tolerations, and the affinity/anti-affinity rules for each of the four workloads. Explain the difference between `requiredDuringSchedulingIgnoredDuringExecution` and `preferredDuringSchedulingIgnoredDuringExecution`.
+
+---
+
+## Q94 | GitHub Actions → Reusable Workflows | Config
+
+Write a reusable GitHub Actions workflow file `.github/workflows/docker-build-push.yml` that can be called from other workflows. It must accept inputs: `image_name` (string), `dockerfile_path` (string, default `./Dockerfile`), `context_path` (string, default `.`), and `push_to_ecr` (boolean). It must accept secrets: `aws_account_id` and `aws_region`. The workflow must: authenticate to ECR using OIDC (no stored credentials), build with BuildKit caching using GitHub Actions cache, tag images with the calling workflow's `github.sha` and `github.ref_name`, push only if `push_to_ecr` is true and the branch is `main` or matches `release/*`, and output the full image URI and image digest as workflow outputs.
+
+---
+
+## Q95 | Terraform → State Management | Coding
+
+Write a Python script `terraform_state_audit.py` that uses `subprocess` to run `terraform state list` and `terraform state show` for each resource, parses the output into a structured dict mapping resource addresses to their attributes, identifies: (1) resources in state that no longer exist in any `.tf` file in the current directory (orphaned state), (2) resources that have drifted (compare state attributes to `terraform plan -json` output), and (3) resources with `lifecycle.prevent_destroy = true`. Output a color-coded terminal report using `rich` library and save a JSON report to `state_audit_<timestamp>.json`. Handle large state files (1000+ resources) with a progress bar. Requires only `subprocess`, `json`, `rich`, and standard library.
+
+---
+
+## Q96 | Linux & Bash → Containers & Cloud | 2AM Fire
+
+At 2 AM, a Docker host running 30 containers starts exhibiting OOM kills. The kernel OOM killer log shows it is killing containers seemingly at random rather than the highest-memory container. Walk through the diagnosis: understanding how Docker translates `--memory` limits to cgroup `memory.limit_in_bytes`, why containers without `--memory` set have no cgroup limit (and become OOM kill candidates at the kernel level), how to identify which containers lack memory limits using `docker inspect` + `jq`, the interaction between host swap (`/proc/sys/vm/swappiness`) and container OOM behavior, and the immediate fix for containers without limits without downtime. Provide the one-liner to find all containers missing memory limits.
+
+---
+
+## Q97 | ArgoCD → Disaster Recovery | Scenario
+
+Your ArgoCD instance is destroyed (the namespace is accidentally deleted along with all Application CRDs). You have Git as the source of truth and a recent Velero backup of the ArgoCD namespace. Describe two recovery paths: (1) full restore from Velero — the exact commands, how long it takes, and what state is lost between backup and deletion, and (2) fresh ArgoCD install + re-registration of all apps from Git — how you reconstruct Application CRDs if the Git repo contains `argocd/apps/` manifests, how you handle the fact that ArgoCD's repo credentials and cluster secrets are NOT in Git (they are in the ArgoCD namespace only), and how ApplicationSets vs App of Apps pattern affects the speed of each recovery path.
+
+---
+
+## Q98 | AWS → S3 & Storage | Failure Mode
+
+A Lambda function that processes S3 event notifications stops receiving events. The S3 bucket has an event notification configured to trigger the Lambda on `s3:ObjectCreated:*`. New objects are being uploaded (verified via S3 inventory). Lambda invocation metrics show zero invocations. Describe the systematic diagnosis: verifying the Lambda resource-based policy allows `s3.amazonaws.com` to invoke the function, checking the S3 event notification configuration for correct prefix/suffix filters, verifying the Lambda function alias or version ARN in the notification matches the deployed function, checking for S3 Event Notification delivery failures in CloudWatch metrics (`NumberOfMessagesNotDelivered`), and how to test the end-to-end path with a manual `aws lambda invoke` + `aws s3 cp`.
+
+---
+
+## Q99 | Kubernetes → Service Mesh & Istio | 2AM Fire
+
+At 2 AM you receive alerts that 100% of traffic to `checkout-service` is returning 503. Istio is deployed. Pod health checks pass. The Istio sidecar is injected. Walk through the Istio-specific investigation: using `istioctl proxy-status` to check xDS sync state, `istioctl proxy-config cluster` and `istioctl proxy-config route` to verify the Envoy config matches the intended VirtualService, checking `istioctl analyze` for misconfigurations, interpreting Envoy access logs (`%RESPONSE_FLAGS%` field — specifically `UF`, `UO`, `NR`), verifying the DestinationRule's `trafficPolicy.connectionPool` hasn't set `maxConnections: 0`, and checking if a recent `PeerAuthentication` change set `mtls: STRICT` before all sidecars were fully injected.
+
+---
+
+## Q100 | Platform Engineering → Architecture | Design Tradeoff
+
+You are the founding Platform Engineer at a 300-engineer company that has outgrown its manual deployment process. Design the complete Internal Developer Platform (IDP) for the next 3 years: the golden path for a developer to go from `git push` to production in under 15 minutes with zero manual steps, the self-service infrastructure provisioning model (Backstage + Crossplane vs Backstage + Terraform + ServiceNow), the multi-tenancy model in Kubernetes (namespace-per-team vs vcluster vs separate clusters), the observability stack (what is standardized vs what teams choose), the secrets management strategy, and the on-call escalation path when a developer's self-service action breaks shared infrastructure. What are the two failure modes of platform teams, and how do you organizationally avoid them?
+
+---
