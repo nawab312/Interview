@@ -53,11 +53,17 @@
 
 **Prometheus Data Model — foundation of everything:**
 ```
-Time Series = unique combination of metric name + labels
-Example: http_requests_total{method="GET", status="200", service="payment"} = 1547
+A sample(data point) is one measurement at one moment in time.
+Structure: (timestamp, value), Example: (1710500000, 1547)
+1710500000 → Unix timestamp (when Prometheus scraped, 1547 → metric value (stored as float64)
 
-Each data point = (timestamp, float64 value) = "sample"
-All samples for one time series = "time series"
+A time series is all samples belonging to the same metric + label combination.
+Example metric: http_requests_total{method="GET", status="200", service="payment"}
+Prometheus scrapes every 15 seconds:
+(10:00:00, 1547)
+(10:00:15, 1551)
+(10:00:30, 1558)
+(10:00:45, 1563)
 
 Labels are KEY to Prometheus:
 - Identify the time series uniquely
