@@ -303,6 +303,13 @@ Layer 4 — Priority Classes:
   globalDefault: false
   # Assign to critical pods: priorityClassName: team-critical
 
+  The value is just a number that ranks pods against each other — higher number wins when Kubernetes needs to evict someone.
+
+  Pod A  →  PriorityClass value: 0          ← evict first
+  Pod B  →  PriorityClass value: 1000        ← evict second
+  Pod C  →  PriorityClass value: 1000000     ← evict last
+  Pod D  →  PriorityClass value: 2000000000  ← almost never evicted
+
 Layer 5 — Node taints + team-specific node groups:
   # Dedicated nodes for team isolation (strongest isolation)
   kubectl taint nodes node-group-a team=a:NoSchedule
