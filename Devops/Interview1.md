@@ -2557,6 +2557,37 @@ What CLOSE_WAIT means:
   CLOSE_WAIT = server received remote's FIN, acknowledged it,
                but application has NOT called close() on the socket yet
 
+Example:
+
+Your Laptop                App Server                    Database Server
+(where you SSH from)       (Node.js process)             (PostgreSQL)
+                           (54.210.x.x)                  (10.0.1.55:5432)
+
+   "Local"          ←→       "Server"          ←→           "Remote"
+
+---
+
+PostgreSQL                        Node.js App Server
+(decides to close connection)     (your process)
+
+    │                                   │
+    │ ──── FIN ──────────────────────►  │  "I want to close"
+    │                                   │
+    │ ◄─── ACK ──────────────────────   │  "Got it"
+    │                                   │
+    │                          *** CLOSE_WAIT ***
+    │                          App should now call
+    │                          close() on the socket
+    │                          but it hasn't yet
+    │                                   │
+    │ ◄─── FIN ──────────────────────   │  "I'm closing too"
+    │                                   │
+    │ ──── ACK ──────────────────────►  │
+    │                                   │
+  CLOSED                            TIME_WAIT → CLOSED
+
+  ---
+
 Why it's a problem:
   → 850 CLOSE_WAIT sockets = 850 sockets not being closed by the app
   → Each socket consumes: file descriptor, kernel memory, port
