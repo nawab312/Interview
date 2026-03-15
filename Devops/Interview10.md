@@ -87,6 +87,23 @@ Step 2 — Check Service B health:
   → ALB 5xx vs 4xx errors?
   → Target group healthy instance count dropping?
 
+  p99 latency means the response time that 99% of requests finish within.
+  
+  Imagine 100 requests made to your service:
+  
+    Request 1    →  12ms
+    Request 2    →  15ms
+    Request 3    →  18ms
+    ...
+    Request 97   →  100ms
+    Request 98   →  120ms
+    Request 99   →  180ms   ← p99 is this number
+    Request 100  →  4500ms  ← this one outlier (the slowest 1%)
+  
+    p99 = 180ms
+    meaning: 99% of your users got a response in 180ms or faster
+             1% of your users waited longer than 180ms
+
 Step 3 — Check connection pool exhaustion:
   → Service B might be running out of connections
   → Check: active threads, connection pool metrics
