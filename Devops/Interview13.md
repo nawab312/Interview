@@ -132,6 +132,23 @@ metadata: Extra information about the target discovered from service discovery, 
   __meta_kubernetes_namespace="prod"
   __meta_kubernetes_pod_node_name="worker-2"
 ```
+```
+Target {
+  address: "10.0.1.5:9100"
+
+  labels: {
+      job="node-exporter"
+      instance="10.0.1.5:9100"
+      env="prod"
+  }
+
+  metadata: {
+      __meta_kubernetes_pod_name="node-exporter-abc123"
+      __meta_kubernetes_namespace="monitoring"
+      __meta_kubernetes_node_name="worker-1"
+  }
+}
+```
 
 **3. Scrape Loop (Retrieval):**
 ```
