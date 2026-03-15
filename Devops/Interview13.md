@@ -119,6 +119,18 @@ scrape_configs:
 Maintains list of all active scrape targets
 Refreshes from service discovery every sync_period (default: 5m)
 Each target = {address, labels, metadata}
+address: This is where Prometheus will scrape metrics from. address = "10.0.1.5:9100"
+labels: Describe what this target represents. Example:
+  job="node-exporter"
+  instance="10.0.1.5:9100"
+  env="prod"
+  region="us-east"
+Example metric scraped: node_cpu_seconds_total
+After labels are attached: node_cpu_seconds_total{job="node-exporter",instance="10.0.1.5:9100",env="prod"}
+metadata: Extra information about the target discovered from service discovery, usually temporary and used for relabeling.
+  __meta_kubernetes_pod_name="payment-7c9b5d"
+  __meta_kubernetes_namespace="prod"
+  __meta_kubernetes_pod_node_name="worker-2"
 ```
 
 **3. Scrape Loop (Retrieval):**
