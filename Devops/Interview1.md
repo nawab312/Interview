@@ -2353,6 +2353,66 @@ Step 6 — AlertManager Slack config:
     - channel: '#alerts'
       api_url: $SLACK_WEBHOOK
       title: '{{ .CommonAnnotations.summary }}'
+
+---
+
+Prometheus Observability Pipeline
+ ___________________________________________________________
+
+
+  ┌──────────────────────────────────┐
+  │  Step 1  ·  Flask app            │
+  │  exposes /metrics                │
+  └─────────────────┬────────────────┘
+                    │  Counter · Histogram
+                    ▼
+
+  ┌──────────────────────────────────┐
+  │  Step 2  ·  Kubernetes Service   │
+  │  port: http-metrics (named port) │
+  └─────────────────┬────────────────┘
+                    │  port name required
+                    ▼
+
+  ┌──────────────────────────────────┐
+  │  Step 3  ·  ServiceMonitor       │
+  │  scrape interval: 30s            │
+  └─────────────────┬────────────────┘
+                    │  tells Prometheus what to scrape
+                    ▼
+
+  ┌──────────────────────────────────┐
+  │  Prometheus                      │
+  │  scrapes · stores · evaluates    │
+  └──────────┬───────────────────────┘
+             │
+             ├──────────────────────────────────────────────►
+             │                                               │
+             ▼                                               ▼
+
+  ┌───────────────────────────┐            ┌──────────────────────────┐
+  │  Step 4  ·  PrometheusRule│            │  Step 5  ·  Grafana      │
+  │  HighErrorRate alert      │            │  RED dashboard           │
+  └─────────────┬─────────────┘            │  · Rate                  │
+                │  fires when              │  · Errors                │
+                │  5xx > 0.05             │  · Duration p99          │
+                ▼                          └──────────────────────────┘
+
+  ┌───────────────────────────┐
+  │  Step 5  ·  AlertManager  │
+  │  routes · deduplicates    │
+  └─────────────┬─────────────┘
+                │  webhook
+                ▼
+
+  ┌───────────────────────────┐
+  │  Step 6  ·  Slack #alerts │
+  │  title · summary · value  │
+  └───────────────────────────┘
+
+ ___________________________________________________________
+     App → K8s → Prometheus → Alert → Notify
+
 ```
 
 > 💡 **Interview tip:** The **RED methodology** (Rate, Errors, Duration) is the standard for service monitoring — mention it explicitly. These three metrics answer: "Is the service being used? Is it broken? Is it slow?" For Kubernetes workloads, also mention **USE methodology** (Utilization, Saturation, Errors) for infrastructure metrics. Having both RED (service health) and USE (infrastructure health) dashboards is the complete observability picture. Also mention that ServiceMonitor labels must match the Prometheus CRD's `serviceMonitorSelector` — this is the #1 misconfiguration with Prometheus Operator.
