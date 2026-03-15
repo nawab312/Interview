@@ -2594,6 +2594,20 @@ Why it's a problem:
   → File descriptors limited: default 1024 (or 65535 if raised)
   → At 65535 sockets: new connections get EMFILE error → app crash
 
+  ---
+
+A file descriptor is just a number the OS assigns to anything your app opens.
+
+Your app opens something       OS assigns a number
+─────────────────────────      ───────────────────
+Opens a file          →        fd 3
+Opens a socket        →        fd 4
+Opens a DB connection →        fd 5
+Opens a log file      →        fd 6
+
+That number is the file descriptor. The OS uses it to track "this process has these things open.
+When you hit the limit — the OS refuses to assign more numbers — that's EMFILE ("too many open files").
+
 Root cause (almost always Java application bug):
   → Connection pool not returning connections to pool
   → HTTP client not calling response.close() after reading
