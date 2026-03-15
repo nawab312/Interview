@@ -199,7 +199,7 @@ Terraform Workspaces:
   Cons:
   ❌ Same backend bucket, easy to accidentally destroy prod
   ❌ Logic becomes messy (if workspace == prod...)
-  ❌ No isolation between environments
+  ❌ No isolation between environments. It means all workspaces share the same backend, same bucket, same IAM permissions, same everything — only the state file is separate.
   ❌ Hard to have fundamentally different architectures
   ❌ Not recommended for production by HashiCorp
 
