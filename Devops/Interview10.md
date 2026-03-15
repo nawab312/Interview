@@ -548,7 +548,16 @@ Step 3 — SSH into the node:
 
   # Check disk:
   df -h
-  du -sh /var/lib/kubelet/*
+  du -sh /var/lib/kubelet/* - shows what inside kubelet's folder is eating disk:
+
+  1.2G   /var/lib/kubelet/config.yaml
+   45G   /var/lib/kubelet/pods          ← pods using 45GB (emptyDir, volumes)
+  512M   /var/lib/kubelet/plugins
+   200M  /var/lib/kubelet/pki
+  
+  45GB in /pods means some pod has written massive data to its volume.
+  That is your culprit.
+
   du -sh /var/log/containers/*
 
   # Check memory:
