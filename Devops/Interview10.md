@@ -122,6 +122,37 @@ Step 5 — Enable AWS X-Ray distributed tracing:
   → Identifies: is slow segment in Service B itself or the network?
   → Service map shows which downstream calls are slow
 
+  Without X-Ray — all you see is:
+    Service A  →  timeout  →  ???
+    You don't know WHERE the 5 seconds went.
+  
+  With X-Ray — you see the full breakdown:
+  
+    Service A
+    │
+    ├── call to Service B ──────────────────── 4,847ms total
+    │     │
+    │     ├── network transit          12ms
+    │     ├── Service B handler        18ms
+    │     ├── Service B → RDS query  4,800ms  ← HERE is your problem
+    │     └── response back             17ms
+    │
+    └── total perceived timeout       4,847ms
+  
+  1. WHERE time was spent
+       CloudWatch: "Service B took 4.8 seconds"
+       X-Ray:      "Service B's RDS call took 4.8 seconds,
+                    everything else was fine"
+  
+    2. WHICH hop is slow across services
+       Without it: you check every service manually
+       With it:    service map lights up the slow node instantly
+  
+    3. WHICH specific request was slow
+       CloudWatch: averages and percentiles across all requests
+       X-Ray:      individual trace — this exact request ID,
+                   this exact user, this exact slow path
+
 Step 6 — Check for connection timeout vs read timeout:
   → Connection timeout: can't reach Service B (network/SG)
   → Read timeout: reached but response too slow (app issue)
