@@ -1,893 +1,3869 @@
-# DevOps / SRE / Cloud Interview Questions (46–90) — Enhanced
+# DevOps / SRE / Cloud Interview Questions (406–450) — Enhanced
 ## Key Points to Cover + Interview Tips Added to Every Question
 
 ---
 
-### Q46 — Kubernetes | Conceptual | Advanced
+### Q406 — Kubernetes | Conceptual | Advanced
 
-> Explain what a **Kubernetes Operator** is. How is it different from a regular **Controller**? Give a real-world example of when you would build or use an Operator instead of a standard Kubernetes resource.
+> Explain **Kubernetes Cluster API (CAPI)**. What problem does it solve and how does it work? What is a **Management Cluster** vs a **Workload Cluster**? What are `Cluster`, `Machine`, `MachineDeployment`, and `MachineHealthCheck` CRDs? How does CAPI enable declarative cluster lifecycle management?
 
-📁 **Reference:** `nawab312/Kubernetes` → `10_CRDs_EXTENSIBILITY.md`
-
-#### Key Points to Cover:
-```
-Controller (built-in):
-  → Watches K8s objects, reconciles actual state to desired state
-  → Built into kube-controller-manager
-  → Manages built-in resources: Deployments, ReplicaSets, Services
-  → Generic logic — doesn't know your app's domain
-
-Operator = Controller + CRD (Custom Resource Definition)
-  → Encodes HUMAN OPERATOR knowledge into software
-  → Manages a CUSTOM resource (your domain object)
-  → Knows app-specific lifecycle: backup, upgrade, failover
-  → Deployed as a Pod in your cluster
-
-Example CRD + Operator:
-  # Without Operator: run PostgreSQL on K8s
-  → Need: StatefulSet, Services, PVCs, backup CronJob, init scripts
-  → Complex to manage, lots of manual steps for upgrades/failover
-
-  # With Operator (e.g. CloudNativePG):
-  apiVersion: postgresql.cnpg.io/v1
-  kind: Cluster
-  metadata:
-    name: postgres-cluster
-  spec:
-    instances: 3
-    storage:
-      size: 100Gi
-  # Operator handles: primary election, replication,
-  # automated backups, minor version upgrades, failover
-
-When to USE an existing Operator:
-  → Databases: CloudNativePG, MongoDB, MySQL
-  → Kafka: Strimzi Operator
-  → Prometheus: Prometheus Operator
-  → Elasticsearch: ECK Operator
-  → Cert-manager, Vault, Istio all use Operators
-
-When to BUILD a custom Operator:
-  → Your app has complex stateful lifecycle management
-  → You need automated Day-2 operations (upgrades, backups)
-  → Repeated human steps that could be codified
-  → Tools: Operator SDK (Go), Kopf (Python), KUDO
-
-Operator Maturity Model:
-  Level 1: Basic Install
-  Level 2: Seamless Upgrades
-  Level 3: Full Lifecycle
-  Level 4: Deep Insights
-  Level 5: Auto Pilot
-```
-
-> 💡 **Interview tip:** The key distinction: **Controllers manage built-in resources, Operators manage custom domain resources with application-specific knowledge.** The classic example: a human PostgreSQL DBA knows to promote a replica when primary fails, run WAL archiving, take consistent backups. An Operator encodes exactly that knowledge — it's a "robotic DBA." When asked "when would you build one?", the answer is: when you have **repetitive Day-2 operational tasks** (upgrades, backups, scaling decisions) that require application-domain knowledge beyond what standard K8s provides.
-
----
-
-### Q47 — AWS | Scenario-Based | Advanced
-
-> Your company has a microservices architecture on AWS. You are seeing **intermittent timeout errors** between Service A and Service B. Service A calls Service B via HTTP. Sometimes the call succeeds, sometimes it times out with no clear pattern. **How would you systematically investigate?**
-
-📁 **Reference:** `nawab312/AWS` — VPC, Security Groups, Load Balancers, CloudWatch sections
+📁 **Reference:** `nawab312/Kubernetes` → `09_CLUSTER_OPERATIONS.md`
 
 #### Key Points to Cover:
 ```
-Step 1 — Characterize the problem:
-  → How often? (5%? 50%? random? time-based?)
-  → Which AZ? (check if single AZ correlation)
-  → Which instance? (check if specific EC2/pod is slow)
-  → What payload size? (large payloads timeout, small succeed?)
+Problem CAPI solves:
+  → Creating K8s clusters today: eksctl, terraform, cloud console — all different
+  → No unified API to manage cluster lifecycle across providers
+  → CAPI: treat clusters as Kubernetes objects — create/upgrade/delete with kubectl
+  → Kubernetes to manage Kubernetes (meta-cluster management)
 
-Step 2 — Check Service B health:
-  aws cloudwatch get-metric-statistics \
-    --metric-name TargetResponseTime \
-    --namespace AWS/ApplicationELB
-  → Is Service B's p99 latency high?
-  → ALB 5xx vs 4xx errors?
-  → Target group healthy instance count dropping?
+Architecture:
+  Management Cluster:
+  → A Kubernetes cluster that runs the CAPI controllers
+  → Small, stable cluster (can be kind/minikube locally)
+  → Contains CAPI CRDs and controllers watching for Cluster objects
 
-  p99 latency means the response time that 99% of requests finish within.
-  
-  Imagine 100 requests made to your service:
-  
-    Request 1    →  12ms
-    Request 2    →  15ms
-    Request 3    →  18ms
-    ...
-    Request 97   →  100ms
-    Request 98   →  120ms
-    Request 99   →  180ms   ← p99 is this number
-    Request 100  →  4500ms  ← this one outlier (the slowest 1%)
-  
-    p99 = 180ms
-    meaning: 99% of your users got a response in 180ms or faster
-             1% of your users waited longer than 180ms
+  Workload Cluster:
+  → The clusters CAPI creates and manages
+  → Defined as CRDs on the management cluster
+  → Lives on cloud provider (AWS, GCP, Azure, bare metal)
 
-Step 3 — Check connection pool exhaustion:
-  → Service B might be running out of connections
-  → Check: active threads, connection pool metrics
-  → CloudWatch: DatabaseConnections (if calling RDS downstream)
+Key CRDs:
+  Cluster:
+    → Top-level object representing a workload cluster
+    → Defines: control plane ref, infrastructure ref
+    → apiVersion: cluster.x-k8s.io/v1beta1
 
-Step 4 — Check network path:
-  # From Service A's EC2/pod:
-  curl -v --max-time 5 http://service-b-internal/health
-  traceroute service-b-internal
-  → Is DNS resolving correctly?
-  → Are Security Groups allowing traffic on correct port?
-  → NACLs blocking return traffic (ephemeral ports)?
+  Machine:
+    → Single node (maps to one EC2/VM)
+    → Has: infrastructure ref (AWSMachine), bootstrap ref (kubeadm config)
+    → Think: 1 Machine = 1 node in the cluster
 
-Step 5 — Enable AWS X-Ray distributed tracing:
-  → Shows exact latency at each service hop
-  → Identifies: is slow segment in Service B itself or the network?
-  → Service map shows which downstream calls are slow
+  MachineDeployment:
+    → Group of Machines (like Deployment for pods)
+    → Handles: rolling updates of nodes
+    → Set replicas: 3 → creates 3 Machines
 
-  Without X-Ray — all you see is:
-    Service A  →  timeout  →  ???
-    You don't know WHERE the 5 seconds went.
-  
-  With X-Ray — you see the full breakdown:
-  
-    Service A
-    │
-    ├── call to Service B ──────────────────── 4,847ms total
-    │     │
-    │     ├── network transit          12ms
-    │     ├── Service B handler        18ms
-    │     ├── Service B → RDS query  4,800ms  ← HERE is your problem
-    │     └── response back             17ms
-    │
-    └── total perceived timeout       4,847ms
-  
-  1. WHERE time was spent
-       CloudWatch: "Service B took 4.8 seconds"
-       X-Ray:      "Service B's RDS call took 4.8 seconds,
-                    everything else was fine"
-  
-    2. WHICH hop is slow across services
-       Without it: you check every service manually
-       With it:    service map lights up the slow node instantly
-  
-    3. WHICH specific request was slow
-       CloudWatch: averages and percentiles across all requests
-       X-Ray:      individual trace — this exact request ID,
-                   this exact user, this exact slow path
+  MachineHealthCheck:
+    → Watches Machine health
+    → Replaces unhealthy machines automatically
+    → maxUnhealthy threshold before stopping remediation
 
-Step 6 — Check for connection timeout vs read timeout:
-  → Connection timeout: can't reach Service B (network/SG)
-  → Read timeout: reached but response too slow (app issue)
+  Infrastructure providers (cloud-specific):
+    AWSCluster, AWSMachine → AWS provider (CAPA)
+    GCPCluster, GCPMachine → GCP provider (CAPG)
+    AzureCluster, AzureMachine → Azure provider (CAPZ)
 
-Common root causes:
-  → Service B under load (no capacity)
-  → Connection pool exhausted on Service B
-  → GC pause in Service B (Java)
-  → AZ imbalance (all traffic hitting one instance)
-  → Keep-alive connection reuse issues
-  → NLB unhealthy target not removed fast enough
-  → DNS TTL caching stale IPs
+Complete cluster lifecycle:
+  # Create cluster (declarative):
+  kubectl apply -f cluster.yaml
+  # CAPI creates: VPC, subnets, control plane nodes, worker nodes
+
+  # Scale workers (just edit replicas):
+  kubectl scale machinedeployment worker-md --replicas=10
+
+  # Upgrade cluster (change version in MachineDeployment):
+  kubectl patch machinedeployment worker-md \
+    -p '{"spec":{"template":{"spec":{"version":"v1.29.0"}}}}'
+  # CAPI does rolling node replacement
+
+  # Delete cluster:
+  kubectl delete cluster my-workload-cluster
+  # All cloud resources cleaned up automatically
+
+CAPI vs eksctl vs Terraform:
+  eksctl: AWS-specific, imperative, no reconciliation loop
+  Terraform: cloud-agnostic, but separate tool, no K8s API
+  CAPI: unified API, declarative, reconciliation, any provider
 ```
 
-> 💡 **Interview tip:** Structure the investigation as **network vs application**. First prove it's not a network issue (Security Groups, NACLs, DNS) — this is fast to check. Then prove it's not infrastructure capacity (CloudWatch ALB metrics, target health). Then look at application behavior (X-Ray traces, connection pools, GC logs). Mention **X-Ray service map** as the single most useful tool — it visually shows which service and which downstream call is the latency source. Without X-Ray, you're guessing; with X-Ray, you're reading a map.
+> 💡 **Interview tip:** CAPI is the answer to "how do you manage hundreds of Kubernetes clusters?" — GitOps for clusters themselves. The killer concept: **the management cluster watches for Cluster objects the same way kube-controller-manager watches Deployments**. You commit a Cluster YAML to Git, ArgoCD applies it to the management cluster, CAPI controller creates actual cloud resources. Infrastructure as code + Kubernetes reconciliation loop = self-healing clusters. The most common production use: platform teams at large enterprises running 50-200 clusters for different teams or environments.
 
 ---
 
-### Q48 — Terraform | Conceptual | Advanced
+### Q407 — AWS | Conceptual | Advanced
 
-> What is the difference between **`terraform workspace`** and **separate directories per environment**? What are the pros and cons of each, and which would you recommend for production?
+> Explain **AWS Gateway Load Balancer (GWLB)**. How does it differ from ALB and NLB? What is a GWLB Endpoint and how does traffic flow through it? Design an architecture using GWLB to insert third-party network appliances transparently.
 
-📁 **Reference:** `nawab312/Terraform` — Workspaces and environment management sections
+📁 **Reference:** `nawab312/AWS` — GWLB, network appliances, transparent traffic inspection sections
 
 #### Key Points to Cover:
 ```
-Terraform Workspaces:
-  → Single codebase, multiple state files per workspace
-  → terraform workspace new prod
-  → terraform workspace select staging
-  → State stored at: terraform.tfstate.d/<workspace>/
-  → Same .tf files for all environments
-  → Access workspace name: ${terraform.workspace}
+What GWLB is:
+  → Layer 3 (network) load balancer for virtual network appliances
+  → Operates at IP packet level (not TCP/HTTP)
+  → Uses GENEVE protocol (port 6081) to encapsulate traffic
+  → Combines: load balancer + transparent inline bump-in-the-wire
 
-  resource "aws_instance" "web" {
-    instance_type = terraform.workspace == "prod" ? "m5.xlarge" : "t3.medium"
-  }
+Why it exists:
+  Problem: insert firewall/IDS/IPS inline without changing app routing
+  Without GWLB: change all route tables in app VPCs to point to appliance
+  With GWLB: route table just points to GWLB endpoint — GWLB handles rest
 
-  Pros:
-  ✅ Single codebase (DRY)
-  ✅ Easy to create new environments
-  ✅ Workspace name available in code
+Key components:
+  GWLB:
+  → Resides in the appliance VPC (security VPC)
+  → Distributes traffic across appliance fleet
+  → Health checks appliances (replaces unhealthy ones)
+  → Supports sticky sessions (same flow always hits same appliance)
 
-  Cons:
-  ❌ Same backend bucket, easy to accidentally destroy prod
-  ❌ Logic becomes messy (if workspace == prod...)
-  ❌ No isolation between environments. It means all workspaces share the same backend, same bucket, same IAM permissions, same everything — only the state file is separate.
-  ❌ Hard to have fundamentally different architectures
-  ❌ Not recommended for production by HashiCorp
+  GWLB Endpoint (GWLBe):
+  → VPC endpoint deployed in application VPC
+  → Acts as next-hop in route table
+  → Traffic goes: app → GWLBe → GWLB → appliance → GWLB → GWLBe → app
 
-Separate directories (recommended for production):
-  environments/
-    dev/
-      main.tf       ← calls modules with dev variables
-      variables.tf
-      terraform.tfvars
-      backend.tf    ← separate S3 key: "dev/terraform.tfstate"
-    staging/
-      main.tf
-      backend.tf    ← separate S3 key: "staging/terraform.tfstate"
-    prod/
-      main.tf
-      backend.tf    ← separate S3 key: "prod/terraform.tfstate"
-  modules/
-    vpc/
-    eks/
-    rds/
+Traffic flow (ingress inspection):
+  Internet → IGW → GWLB Endpoint → GWLB → Firewall → GWLB → GWLB Endpoint → App
 
-  Pros:
-  ✅ Complete isolation (separate state, separate backend)
-  ✅ Can have different architecture per env (prod has WAF, dev doesn't)
-  ✅ Clear separation of who can run what (IAM per env)
-  ✅ Accidental prod destroy much harder
-  ✅ HashiCorp recommended for production
+  Route table in app VPC:
+    0.0.0.0/0 → GWLBe     (all internet traffic goes through endpoint)
 
-  Cons:
-  ❌ More directories to manage
-  ❌ Must navigate to correct dir before running
-  ❌ Risk of drift if modules updated in one env but not others
+  IGW route table (ingress):
+    10.0.1.0/24 → GWLBe   (inbound traffic to app subnet inspected first)
 
-Recommendation: Separate directories + modules
-  → Modules: shared reusable code
-  → Environments: separate dirs with separate backends
-  → Terragrunt: makes this pattern DRY (avoids backend config repetition)
+GENEVE encapsulation:
+  → GWLB wraps original packet in GENEVE header
+  → Appliance sees: original source/dest IP (transparent)
+  → Appliance can make allow/deny decisions on real IPs
+  → Return traffic: appliance sends back → GWLB strips header → forwards
+
+ALB vs NLB vs GWLB:
+  ALB: Layer 7, HTTP/S, path/host routing → web apps
+  NLB: Layer 4, TCP/UDP, static IPs → non-HTTP, low latency
+  GWLB: Layer 3, any protocol, appliance inspection → security
+
+Use cases:
+  ✅ Next-gen firewall (Palo Alto, Fortinet, Check Point)
+  ✅ IDS/IPS (intrusion detection/prevention)
+  ✅ Deep packet inspection
+  ✅ Centralized security inspection for all VPCs via TGW
 ```
 
-> 💡 **Interview tip:** HashiCorp themselves say **workspaces are NOT intended for environment separation** — they're for testing alternate configurations of the same infrastructure. The problem with workspaces in production: all environments share one backend bucket, and a typo (running `terraform destroy` on the wrong workspace) can destroy prod. With separate directories + separate S3 buckets + separate IAM roles, a developer physically cannot run `terraform apply` against prod unless they have prod IAM permissions. **Isolation by IAM** is the production-grade approach.
+> 💡 **Interview tip:** GWLB's key innovation is **bump-in-the-wire without routing changes on the app side**. The application VPC just has one route table change (0.0.0.0/0 → GWLBe) — the entire inspection architecture lives in the security VPC. This means you can insert/remove security appliances without any changes to application infrastructure. The GENEVE protocol is what enables transparency — the appliance sees the original source/destination IPs, not the GWLB's IPs, so firewall rules work based on real traffic patterns.
 
 ---
 
-### Q49 — Kubernetes | Scenario-Based | Advanced
+### Q408 — Linux / Bash | Conceptual | Advanced
 
-> You have a multi-tenant Kubernetes cluster where Team A's application is consuming excessive CPU/memory, causing other teams' resource starvation and evictions. **How would you isolate resources between teams and prevent one team from affecting others?**
+> Explain **Linux `perf`** tool — what can it measure? Walk through `perf top`, `perf record + perf report`, `perf stat`, and `perf trace`. What is a **flame graph** and how do you interpret it? How does `perf` compare to `strace`?
 
-📁 **Reference:** `nawab312/Kubernetes` → `06_SCHEDULING_RESOURCE_MANAGEMENT.md`
+📁 **Reference:** `nawab312/DSA` → `Linux` — perf, profiling, flame graphs sections
 
 #### Key Points to Cover:
 ```
-Layer 1 — Namespace isolation:
-  kubectl create namespace team-a
-  kubectl create namespace team-b
-  # Each team gets their own namespace
+What perf is:
+  → Linux kernel profiling tool (requires kernel 2.6.31+)
+  → Measures: CPU performance counters, kernel tracepoints, hardware events
+  → Low overhead (~1-3% CPU) vs Valgrind (10-100x slowdown)
+  → Part of linux-tools package
 
-Layer 2 — ResourceQuota (namespace-level ceiling):
-  apiVersion: v1
-  kind: ResourceQuota
-  metadata:
-    name: team-a-quota
-    namespace: team-a
-  spec:
-    hard:
-      requests.cpu: "10"        # total CPU requests in namespace
-      requests.memory: 20Gi    # total memory requests
-      limits.cpu: "20"          # total CPU limits
-      limits.memory: 40Gi
-      pods: "50"               # max pods
-      services: "10"
+perf top (real-time CPU profiling):
+  perf top                          # system-wide, all processes
+  perf top -p <PID>                 # specific process
+  perf top -e cache-misses          # specific event
+  # Output: function names + % CPU time
+  # Identifies: which functions are HOT (consuming most CPU)
 
-Layer 3 — LimitRange (per-container defaults and limits):
-  apiVersion: v1
-  kind: LimitRange
-  metadata:
-    name: team-a-limits
-    namespace: team-a
-  spec:
-    limits:
-    - type: Container
-      default:               # default LIMIT if not specified
-        cpu: "500m"
-        memory: 512Mi
-      defaultRequest:        # default REQUEST if not specified
-        cpu: "100m"
-        memory: 128Mi
-      max:                   # maximum allowed per container
-        cpu: "4"
-        memory: 8Gi
-      min:
-        cpu: "50m"
-        memory: 64Mi
+perf record + perf report:
+  # Record profiling data:
+  perf record -g -p <PID> sleep 30  # -g = call graphs, 30 second sample
+  # Creates: perf.data file
 
-Layer 4 — Priority Classes:
-  # Ensure critical infra pods aren't evicted before team pods
-  apiVersion: scheduling.k8s.io/v1
-  kind: PriorityClass
-  metadata:
-    name: team-critical
-  value: 1000000
-  globalDefault: false
-  # Assign to critical pods: priorityClassName: team-critical
+  # Analyze:
+  perf report --sort=cpu             # sort by CPU usage
+  perf report --stdio                # text output
 
-  The value is just a number that ranks pods against each other — higher number wins when Kubernetes needs to evict someone.
+  # Generate flame graph (Brendan Gregg's tool):
+  perf script > out.perf
+  ./FlameGraph/stackcollapse-perf.pl out.perf > out.folded
+  ./FlameGraph/flamegraph.pl out.folded > flamegraph.svg
+  # Open SVG in browser
 
-  Pod A  →  PriorityClass value: 0          ← evict first
-  Pod B  →  PriorityClass value: 1000        ← evict second
-  Pod C  →  PriorityClass value: 1000000     ← evict last
-  Pod D  →  PriorityClass value: 2000000000  ← almost never evicted
+perf stat (CPU counter analysis):
+  perf stat command_or_pid
+  # Output:
+  # task-clock: CPU time used (wall clock × CPUs)
+  # context-switches: how often kernel switches tasks
+  # cache-misses: L1/L2/L3 cache miss rate
+  # instructions per cycle (IPC): efficiency metric
+  # branch-misses: CPU branch predictor failures
 
-Layer 5 — Node taints + team-specific node groups:
-  # Dedicated nodes for team isolation (strongest isolation)
-  kubectl taint nodes node-group-a team=a:NoSchedule
-  # Team A pods get toleration for this taint
+  # If IPC < 1: likely memory-bound (cache misses stalling CPU)
+  # If IPC > 2: well-optimized compute-bound code
 
-Layer 6 — NetworkPolicy (traffic isolation):
-  # Team A pods cannot reach Team B pods
-  kind: NetworkPolicy
-  spec:
-    podSelector: {}       # all pods in namespace
-    policyTypes: [Ingress, Egress]
-    ingress:
-    - from:
-      - namespaceSelector:
-          matchLabels:
-            team: a       # only from same team namespace
+perf trace (syscall tracing):
+  perf trace -p <PID>               # trace all syscalls
+  perf trace -e open,read,write     # specific syscalls only
+  # Faster than strace (kernel-based, less overhead)
 
-Immediate fix for existing starvation:
-  kubectl top pods -n team-a --sort-by=cpu
-  kubectl describe pod <hungry-pod> -n team-a
-  # Add resource requests/limits to team-a pods immediately
+Flame graph interpretation:
+  → X-axis: CPU time (wider = more time spent)
+  → Y-axis: call stack depth (bottom = entry, top = where time spent)
+  → Color: random (just for visual distinction)
+  → Flat top: function at top is WHERE time is consumed
+  → Tall narrow spike: deep call chain but fast function
+  → Wide plateau: function consuming significant CPU directly
+
+perf vs strace:
+  perf:       sampling-based, low overhead, CPU profiling, hardware counters
+              Use: performance bottlenecks, CPU-bound issues
+  strace:     tracing every syscall, high overhead (3-10x slowdown)
+              Use: debugging, what syscalls is process making?
 ```
 
-> 💡 **Interview tip:** The **order of enforcement** matters: LimitRange sets per-container defaults and maximums (enforced at pod creation), ResourceQuota sets namespace-level totals (enforced at namespace level). Without LimitRange, a pod with no resource requests is treated as requesting 0 — it gets scheduled everywhere but then steals resources without limits. Always pair ResourceQuota with LimitRange — quota without per-pod limits is incomplete. For **strongest isolation**, use dedicated node groups with taints — this prevents noisy neighbors at the kernel level, not just the K8s scheduling level.
+> 💡 **Interview tip:** The **flame graph** is the single most useful performance diagnostic tool. The rule: look for the **widest plateau near the top** — that's where CPU time is actually being spent. If you see a wide `malloc`/`free` plateau, you have allocation pressure. A wide `mutex_lock` plateau means lock contention. A wide `memcpy` means memory bandwidth issues. The interview power move: "I generated a flame graph and immediately saw that 40% of CPU time was in JSON serialization — we replaced the library and got 40% throughput improvement with zero algorithm changes."
 
 ---
 
-### Q50 — Linux / Bash | Conceptual | Advanced
+### Q409 — Prometheus | Conceptual | Advanced
 
-> Explain the difference between a **process** and a **thread**. What are **zombie processes** and **orphan processes** — how are they created, what problems do they cause, and how do you identify and clean them up?
-
-📁 **Reference:** `nawab312/DSA` → `Linux` — process management sections
-
-#### Key Points to Cover:
-```
-Process vs Thread:
-  Process:
-    → Independent execution unit with own memory space
-    → Own PID, file descriptors, address space
-    → Communication via IPC (pipes, sockets, shared memory)
-    → Isolation: crash doesn't affect other processes
-    → Creation: fork() system call (expensive — copies memory)
-
-  Thread:
-    → Lightweight execution unit WITHIN a process
-    → Shares: memory, file descriptors, address space with parent
-    → Own: stack, registers, thread ID
-    → Communication: shared memory (fast but needs synchronization)
-    → Creation: pthread_create() (cheap — no memory copy)
-    → Crash in one thread can kill entire process
-
-  View threads:
-    ps -T -p <PID>        # threads of specific process
-    top -H -p <PID>       # top with thread view
-    ls /proc/<PID>/task/  # one directory per thread
-
-Zombie processes:
-  Definition: child process has EXITED but parent hasn't called wait()
-  State: 'Z' in ps output (ps aux shows 'Z' in STAT column)
-
-  How created:
-    1. Child process calls exit()
-    2. Child enters zombie state (kernel keeps exit status)
-    3. Parent should call wait() to collect exit status
-    4. If parent never calls wait() → zombie persists
-
-  Problem: zombie consumes PID (limited resource, ~32768 by default)
-  Many zombies → cannot create new processes → system unusable
-
-  Identify:
-    ps aux | awk '$8 == "Z"'
-    ps aux | grep defunct
-
-  Clean up:
-    # Option 1: kill the PARENT process (parent dying triggers init to reap)
-    kill -9 <PARENT_PID>
-    # Option 2: send SIGCHLD to parent (asks parent to call wait())
-    kill -SIGCHLD <PARENT_PID>
-    # Note: cannot kill zombie itself — it's already dead
-
-Orphan processes:
-  Definition: parent process DIES before child process
-  Child is "adopted" by init/systemd (PID 1) automatically
-  Init calls wait() when orphan exits → no zombie created
-
-  Usually not a problem — init handles them
-  Can be a problem if: orphan runs forever consuming resources
-
-  Identify:
-    pstree    # shows processes whose parent is systemd/init(PID 1)
-    ps -eo pid,ppid,cmd | awk '$2 == 1'  # all children of PID 1
-```
-
-> 💡 **Interview tip:** Zombies are a common production issue in containerized environments — if your container's PID 1 doesn't properly handle SIGCHLD and reap children, zombie processes accumulate. This is why Kubernetes uses **`tini`** as PID 1 in containers (or Docker's `--init` flag) — tini is a tiny init process that properly reaps orphan/zombie children. The interview gold: "zombie can't be killed with `kill -9` because it's already dead — you kill the parent, which causes the zombie to be reaped by init."
-
----
-
-### Q51 — Prometheus | Scenario-Based | Advanced
-
-> You are asked to monitor a Node.js microservice running on Kubernetes with no existing metrics. Walk through: instrumenting the app, exposing metrics, and writing PromQL for request rate, p99 latency for `/api/checkout`, and 5xx error percentage.
+> Explain **OpenTelemetry** and its relationship with Prometheus. What is the **OpenTelemetry Collector** and how does it fit into a modern observability stack? What is the difference between **OTLP** and **Prometheus exposition format**? How does the Collector act as a universal observability pipeline?
 
 📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Prometheus`
 
 #### Key Points to Cover:
 ```
-Step 1 — Instrument Node.js app:
-  npm install prom-client
+OpenTelemetry (OTel):
+  → CNCF standard for telemetry: traces, metrics, logs
+  → Vendor-neutral: one SDK exports to any backend
+  → Replaces: vendor-specific SDKs (Datadog agent, New Relic agent)
+  → Components: SDK (instrument apps), Collector, Protocol (OTLP)
 
-  const promClient = require('prom-client');
-  const register = new promClient.Registry();
-  promClient.collectDefaultMetrics({ register }); // CPU, memory, GC
+OTLP vs Prometheus exposition format:
+  Prometheus format:
+  → Pull-based: Prometheus scrapes /metrics endpoint
+  → Text-based: human-readable key=value format
+  → Only metrics (no traces, no logs)
+  → Stateless: metrics calculated at scrape time
 
-  // Custom metrics:
-  const httpRequestsTotal = new promClient.Counter({
-    name: 'http_requests_total',
-    help: 'Total HTTP requests',
-    labelNames: ['method', 'route', 'status_code'],
-    registers: [register],
-  });
+  OTLP (OpenTelemetry Protocol):
+  → Push-based: app sends telemetry to collector
+  → Binary (gRPC) or JSON over HTTP
+  → Unified: metrics + traces + logs in same protocol
+  → Stateful: client manages state, sends deltas or cumulative
 
-  const httpRequestDuration = new promClient.Histogram({
-    name: 'http_request_duration_seconds',
-    help: 'HTTP request duration in seconds',
-    labelNames: ['method', 'route', 'status_code'],
-    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
-    registers: [register],
-  });
+  OTel can EXPORT to Prometheus format:
+  → Collector converts OTLP metrics → Prometheus format
+  → Prometheus scrapes the Collector's /metrics endpoint
+  → Best of both worlds: OTel instrumentation + Prometheus backend
 
-  // Middleware to record metrics:
-  app.use((req, res, next) => {
-    const end = httpRequestDuration.startTimer({
-      method: req.method,
-      route: req.route?.path || req.path,
-    });
-    res.on('finish', () => {
-      httpRequestsTotal.inc({
-        method: req.method,
-        route: req.route?.path || req.path,
-        status_code: res.statusCode,
-      });
-      end({ status_code: res.statusCode });
-    });
-    next();
-  });
+OpenTelemetry Collector:
+  → Agent/gateway that receives, processes, exports telemetry
+  → Deployed as: DaemonSet (node agent) or Deployment (central gateway)
+  → Not a storage backend — just a pipeline
 
-  // Expose /metrics endpoint:
-  app.get('/metrics', async (req, res) => {
-    res.set('Content-Type', register.contentType);
-    res.end(await register.metrics());
-  });
+  Collector pipeline:
+  Receivers → Processors → Exporters
 
-Step 2 — K8s Service with named port:
-  spec:
-    ports:
-    - name: http-metrics
-      port: 9090
+  receivers:           # accept data from sources
+    otlp:              # from apps using OTLP SDK
+      protocols:
+        grpc: {endpoint: "0.0.0.0:4317"}
+        http: {endpoint: "0.0.0.0:4318"}
+    prometheus:        # scrape existing Prometheus /metrics
+      config:
+        scrape_configs:
+        - job_name: 'myapp'
+          static_configs:
+          - targets: ['app:8080']
+    jaeger:            # accept Jaeger format traces
+    zipkin:            # accept Zipkin format traces
 
-Step 3 — ServiceMonitor (Prometheus Operator):
-  apiVersion: monitoring.coreos.com/v1
-  kind: ServiceMonitor
+  processors:
+    batch:             # batch for efficiency
+    memory_limiter:    # prevent OOM
+    resource:          # add/modify attributes
+      attributes:
+      - action: insert
+        key: cluster
+        value: production
+
+  exporters:           # send to backends
+    prometheusremotewrite:
+      endpoint: "http://prometheus:9090/api/v1/write"
+    jaeger:
+      endpoint: "jaeger:14250"
+    loki:
+      endpoint: "http://loki:3100/loki/api/v1/push"
+    datadog:
+      api:
+        key: "${DD_API_KEY}"
+
+Universal pipeline benefit:
+  Single instrumentation → multiple backends
+  App uses OTel SDK → sends OTLP to Collector
+  Collector exports to: Prometheus (metrics) + Jaeger (traces) + Loki (logs)
+  Change backend: update Collector config, no app changes
+```
+
+> 💡 **Interview tip:** The key OTel value proposition for interviews: **"instrument once, export anywhere."** Before OTel, if you wanted to switch from Datadog to Prometheus, you had to re-instrument every application. With OTel SDK, the app just sends OTLP — the Collector handles the translation to whatever backend you run. The Collector's **processor** stage is underappreciated: it can filter, transform, and enrich telemetry centrally (add environment tags, drop PII from logs, sample traces) without touching application code.
+
+---
+
+### Q410 — Kubernetes | Scenario-Based | Advanced
+
+> You need to run **WebAssembly (WASM) workloads** on Kubernetes alongside container workloads. Explain what WasmEdge and `containerd-wasm-shims` provide. What is a `RuntimeClass` for WASM? What are the benefits of WASM for serverless-style workloads?
+
+📁 **Reference:** `nawab312/Kubernetes` → `07_SECURITY.md`, `13_DOCKER_CONTAINER_FUNDAMENTALS.md`
+
+#### Key Points to Cover:
+```
+What WASM is:
+  → Binary instruction format: runs at near-native speed
+  → Sandboxed execution environment (no direct OS access)
+  → Originally for browsers, now for server-side (WASI = WASM System Interface)
+  → Microsecond cold starts (vs seconds for containers)
+  → Tiny size: WASM binary often < 1MB (vs container image 100MB+)
+
+Benefits vs containers:
+  Cold start: ~1ms vs 500ms+ for containers
+  Size: 1MB vs 100MB+
+  Security: stronger sandbox (no host OS syscalls without WASI permission)
+  Portability: one binary runs on any CPU architecture (x86, ARM, RISC-V)
+  Memory: much lower footprint
+
+Runtime components:
+  WasmEdge:
+  → High-performance WASM runtime
+  → Supports: WASI, networking (via WASI-sockets)
+  → Docker supports WasmEdge via containerd shim
+
+  containerd-wasm-shims:
+  → Plugin for containerd that enables WASM workload execution
+  → Implements: containerd's runtime v2 interface
+  → Container runtime doesn't know it's running WASM (transparent)
+
+  Spin (Fermyon):
+  → Framework for building WASM microservices
+  → Compatible with K8s via SpinKube
+
+RuntimeClass:
+  → K8s mechanism to select different container runtimes per pod
+  → Used for: gVisor (sandbox), Kata (VM), WASM
+
+  # 1. Configure containerd with WASM shim
+  # /etc/containerd/config.toml:
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.spin]
+    runtime_type = "io.containerd.spin.v2"
+
+  # 2. Create RuntimeClass:
+  apiVersion: node.k8s.io/v1
+  kind: RuntimeClass
   metadata:
-    name: nodejs-app
-    labels:
-      release: prometheus
+    name: wasmtime-spin
+  handler: spin
+
+  # 3. Use in pod:
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: wasm-app
   spec:
+    template:
+      spec:
+        runtimeClassName: wasmtime-spin   # ← select WASM runtime
+        containers:
+        - name: wasm-app
+          image: ghcr.io/my-org/my-wasm-app:latest
+          command: ["/"]
+
+  # 4. Node needs WASM-capable runtime:
+  # Add toleration for WASM nodes:
+  nodeSelector:
+    kubernetes.io/arch: wasm32-wasi
+
+Use cases for WASM on K8s:
+  ✅ Edge functions (fast cold starts critical)
+  ✅ Plugin systems (sandboxed user code)
+  ✅ Multi-tenant function execution (strong isolation)
+  ✅ Polyglot microservices (one runtime for multiple languages)
+```
+
+> 💡 **Interview tip:** WASM on Kubernetes is still emerging (2024-2025) but increasingly asked in forward-looking interviews. The key differentiator from containers: **language portability + security sandbox**. A WASM binary compiled from Rust runs identically on x86, ARM64, and RISC-V without recompilation — this is the "write once, run anywhere" that Java promised but at near-native speed. The RuntimeClass mechanism is the Kubernetes hook point — it's the same mechanism used by gVisor and Kata Containers, so understanding RuntimeClass deeply shows breadth of container runtime knowledge.
+
+---
+
+### Q411 — AWS | Scenario-Based | Advanced
+
+> Design a production **AWS MSK (Managed Streaming for Kafka)** cluster with 3 brokers across 3 AZs, mTLS authentication, topic-level ACLs, consumer group lag monitoring, and auto-scaling broker storage. MSK Serverless vs provisioned — when to choose each?
+
+📁 **Reference:** `nawab312/AWS` — MSK, Kafka, mTLS, consumer group lag sections
+
+#### Key Points to Cover:
+```
+MSK Provisioned vs Serverless:
+  Provisioned:
+  ✅ Full control (broker type, number, storage)
+  ✅ Predictable throughput requirements
+  ✅ Custom configurations (log retention, compression)
+  ✅ mTLS + ACL support
+  → Use: production with consistent/high throughput
+
+  MSK Serverless:
+  ✅ No capacity planning (scales automatically)
+  ✅ Pay per usage (GB in/out)
+  ✅ MSK IAM auth only (no mTLS/SASL)
+  → Use: variable/unpredictable load, dev/test
+
+MSK Provisioned setup (3 brokers, 3 AZs):
+  aws kafka create-cluster \
+    --cluster-name prod-kafka \
+    --kafka-version "3.5.1" \
+    --number-of-broker-nodes 3 \
+    --broker-node-group-info '{
+      "InstanceType": "kafka.m5.large",
+      "ClientSubnets": ["subnet-az1", "subnet-az2", "subnet-az3"],
+      "StorageInfo": {"EbsStorageInfo": {"VolumeSize": 1000}},
+      "SecurityGroups": ["sg-kafka"]
+    }' \
+    --encryption-info '{
+      "EncryptionInTransit": {"ClientBroker": "TLS", "InCluster": true}
+    }' \
+    --client-authentication '{
+      "Tls": {"CertificateAuthorityArnList": ["arn:aws:acm-pca:..."]},
+      "Unauthenticated": {"Enabled": false}
+    }'
+
+mTLS authentication setup:
+  # Uses AWS Certificate Manager Private CA (ACM PCA)
+  # 1. Create Private CA in ACM
+  # 2. Issue client certificates for producers/consumers
+  # 3. Clients present cert when connecting
+  # 4. MSK validates cert against CA chain
+
+  Producer configuration:
+  bootstrap.servers=broker1:9094,broker2:9094   # port 9094 = TLS
+  security.protocol=SSL
+  ssl.keystore.location=/path/client.keystore.jks
+  ssl.keystore.password=password
+  ssl.truststore.location=/path/client.truststore.jks
+
+Topic-level ACLs (Kafka ACLs):
+  # Only producer-service can produce to orders topic:
+  kafka-acls.sh --bootstrap-server broker:9094 \
+    --command-config client.properties \
+    --add \
+    --allow-principal "User:CN=producer-service" \
+    --operation Write \
+    --topic orders
+
+  # Only consumer-service can consume from orders topic:
+  kafka-acls.sh --add \
+    --allow-principal "User:CN=consumer-service" \
+    --operation Read \
+    --topic orders \
+    --group order-processing-group
+
+Consumer group lag monitoring:
+  # CloudWatch metric: kafka.consumer_lag
+  # MSK publishes: SumOffsetLag, EstimatedTimeLag
+  # Alert: SumOffsetLag > 10000 → consumers falling behind
+
+  # Or use: Burrow (open source consumer lag monitor)
+  # Or use: MSK Connect (managed Kafka Connect)
+
+Auto-scaling broker storage:
+  aws kafka update-storage \
+    --cluster-arn arn:... \
+    --current-version V-xxxxx \
+    --target-broker-ebs-volume-info '[{
+      "KafkaBrokerNodeId": "ALL",
+      "VolumeSizeGB": 2000
+    }]'
+  # MSK supports: auto-scaling via CloudWatch alarm → Lambda → update storage
+  # Or: enable auto-expand: StorageAutoScaling with target utilization 75%
+```
+
+> 💡 **Interview tip:** The mTLS + ACL combination is the **production-grade Kafka security model**. mTLS ensures only authorized clients connect (authentication), ACLs ensure clients can only access their authorized topics (authorization). Without ACLs, any authenticated client can read/write any topic — a noisy neighbor or misconfigured service can pollute unrelated topics. The Common Name (CN) in the client certificate becomes the Kafka principal (`User:CN=service-name`) — design your certificate CN naming convention to map cleanly to your service names.
+
+---
+
+### Q412 — ArgoCD | Scenario-Based | Advanced
+
+> Integrate **ArgoCD with HashiCorp Vault** using the `argocd-vault-plugin`. How does the plugin work? Configure Vault AppRole auth for ArgoCD. Handle **secret rotation** — how does ArgoCD re-render manifests when Vault secrets change?
+
+📁 **Reference:** `nawab312/CI_CD` → `ArgoCD` — Vault plugin, secret management sections
+
+#### Key Points to Cover:
+```
+Why argocd-vault-plugin:
+  Problem: Kubernetes Secrets in Git = base64 encoded = insecure
+  argocd-vault-plugin: manifests contain PLACEHOLDERS, not secrets
+  ArgoCD renders: replaces placeholders with real values from Vault at sync time
+  Git never contains actual secret values
+
+How the plugin works:
+  1. Git has manifest with placeholder:
+     apiVersion: v1
+     kind: Secret
+     metadata:
+       name: app-secret
+       annotations:
+         avp.kubernetes.io/path: "secret/data/myapp"
+     stringData:
+       db_password: <db_password>      # ← placeholder
+       api_key: <api_key>              # ← placeholder
+
+  2. ArgoCD runs plugin during sync:
+     → Plugin reads: avp.kubernetes.io/path annotation
+     → Calls Vault: GET secret/data/myapp
+     → Substitutes: <db_password> → actual value from Vault
+
+  3. Kubernetes Secret created with real values (never in Git)
+
+Two approaches:
+  Template substitution (AVP):
+  → `<placeholder>` syntax in manifests
+  → Plugin runs as ArgoCD repo server plugin
+
+  Vault Secrets Operator (modern approach):
+  → CRD: VaultStaticSecret, VaultDynamicSecret
+  → Operator runs in cluster, syncs Vault → K8s Secrets
+  → ArgoCD manages the VaultStaticSecret CRD (not the Secret itself)
+
+Vault AppRole authentication:
+  # Create AppRole in Vault:
+  vault auth enable approle
+  vault write auth/approle/role/argocd \
+    token_policies="argocd-policy" \
+    token_ttl=1h
+
+  # Get credentials:
+  vault read auth/approle/role/argocd/role-id     → role_id
+  vault write -f auth/approle/role/argocd/secret-id → secret_id
+
+  # Store in K8s secret for ArgoCD:
+  kubectl create secret generic avp-creds \
+    --from-literal=VAULT_ADDR=https://vault.company.com \
+    --from-literal=AVP_AUTH_TYPE=approle \
+    --from-literal=AVP_ROLE_ID=$ROLE_ID \
+    --from-literal=AVP_SECRET_ID=$SECRET_ID \
+    -n argocd
+
+Secret rotation handling:
+  Problem: Vault secret changes → ArgoCD doesn't know → stale K8s Secret
+
+  Solutions:
+  Option 1: Force re-sync on schedule:
+    argocd app set myapp --sync-option PrunePropagationPolicy=background
+    # Cron: argocd app sync myapp --force
+
+  Option 2: Vault → EventBridge/webhook → trigger ArgoCD sync:
+    Vault agent → writes to annotation → ArgoCD detects change → sync
+
+  Option 3: Use External Secrets Operator instead:
+    → ESO watches Vault for changes and syncs automatically
+    → No ArgoCD involvement in secret lifecycle
+
+  Option 4: avp.kubernetes.io/secret-version annotation:
+    → Pin to Vault secret version
+    → Update annotation in Git when secret rotates → triggers sync
+```
+
+> 💡 **Interview tip:** The most production-ready approach today is **ExternalSecrets Operator (ESO) + ArgoCD, NOT argocd-vault-plugin directly**. With ESO: ArgoCD manages the `ExternalSecret` CRD (which is just a pointer to Vault — safe to commit to Git), and ESO handles the actual secret retrieval and rotation in the cluster. ArgoCD never touches the secret values. This separation of concerns is cleaner than the plugin approach because secret rotation (ESO's job) is decoupled from deployment (ArgoCD's job).
+
+---
+
+### Q413 — Linux / Bash | Troubleshooting | Advanced
+
+> A production application shows **random memory corruption** using POSIX shared memory. Walk through debugging: Valgrind memcheck, AddressSanitizer (ASAN), `/proc/PID/maps`, causes of shared memory corruption, and how `mprotect()` helps isolate it.
+
+📁 **Reference:** `nawab312/DSA` → `Linux` — memory debugging, Valgrind, ASAN sections
+
+#### Key Points to Cover:
+```
+Types of memory corruption:
+  Buffer overflow:     write past end of buffer → corrupt adjacent memory
+  Use after free:      access freed memory → undefined behavior
+  Double free:         free same pointer twice → heap corruption
+  Race condition:      two threads write same memory simultaneously
+
+Valgrind memcheck:
+  valgrind --tool=memcheck \
+    --leak-check=full \
+    --track-origins=yes \
+    --show-leak-kinds=all \
+    ./my-application
+
+  Detects:
+  → Invalid reads/writes (buffer overflows)
+  → Use after free
+  → Memory leaks
+  → Uninitialized values
+
+  Output:
+  ==1234== Invalid write of size 4
+  ==1234==    at 0x401234: function_name (file.c:42)
+  ==1234==  Address 0x5204e80 is 0 bytes after a block of size 100 alloc'd
+
+  Overhead: 10-30x slowdown (not for production)
+
+AddressSanitizer (ASAN):
+  # Compile with ASAN:
+  gcc -fsanitize=address -fno-omit-frame-pointer -g -O1 app.c -o app
+  # Or with CMake:
+  add_compile_options(-fsanitize=address)
+  add_link_options(-fsanitize=address)
+
+  ./app  # ASAN instruments at runtime
+
+  Benefits vs Valgrind:
+  → 2x slowdown (vs 30x for Valgrind)
+  → More accurate line numbers
+  → Can run in staging/test (Valgrind too slow)
+
+  Output:
+  ==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x...
+  WRITE of size 4 at 0x... thread T0
+  #0 0x... in function_name file.c:42
+
+/proc/PID/maps (memory layout inspection):
+  cat /proc/1234/maps
+  # Columns: address range, perms, offset, device, inode, path
+  # 7f8b4c000000-7f8b4c100000 rw-s 0 00:05 12345 /dev/shm/my-shared-mem
+  # Look for: unexpected permissions, unexpected shared mappings
+
+Shared memory corruption causes:
+  Race condition (most common):
+  → Two processes write same memory address without synchronization
+  → Fix: mutex, semaphore, or atomic operations around shared memory access
+
+  Wrong size calculation:
+  → shm_open + ftruncate with wrong size
+  → mmap with wrong length
+  → Buffer written beyond mapped region
+
+  ABI mismatch:
+  → Two processes compiled with different struct layouts
+  → One writes struct size X, other reads struct size Y → misaligned reads
+
+mprotect() for isolation:
+  # Mark shared memory region as read-only after initialization:
+  mprotect(shared_ptr, size, PROT_READ);
+  # Any write → SIGSEGV → crash with location of corruption
+
+  # For guard pages (catch buffer overflows):
+  void* guard = mmap(NULL, page_size, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  # PROT_NONE: any access (read or write) → segfault
+
+ThreadSanitizer (TSan) for race conditions:
+  gcc -fsanitize=thread -g ./app
+  # Detects: data races, lock order violations
+  # For shared memory corruption: usually the right tool
+```
+
+> 💡 **Interview tip:** For shared memory corruption specifically, **ThreadSanitizer (TSan) is usually the right first tool**, not Valgrind or ASAN. Shared memory bugs are almost always race conditions (two processes accessing shared memory without proper synchronization). TSan detects concurrent memory accesses without locks. ASAN is better for single-process heap corruption. The production debugging strategy: reproduce in staging with ASAN enabled at compile time — 2x overhead is acceptable for staging, and you get exact line numbers and call stacks for every corruption event.
+
+---
+
+### Q414 — Kubernetes | Conceptual | Advanced
+
+> Explain **Kubernetes `VolumeSnapshot`** and `VolumeSnapshotClass`. Walk through the complete workflow: creating a snapshot from a PVC, restoring a PVC from snapshot, automated snapshots via CronJob, cross-namespace restore, and what happens if original PVC is deleted.
+
+📁 **Reference:** `nawab312/Kubernetes` → `04_STORAGE.md`
+
+#### Key Points to Cover:
+```
+VolumeSnapshot architecture:
+  VolumeSnapshotClass: defines the snapshotter driver (like StorageClass)
+  VolumeSnapshot: user request to snapshot a PVC
+  VolumeSnapshotContent: the actual snapshot (like PV for PVC)
+
+  VolumeSnapshotClass (cluster-scoped):
+  apiVersion: snapshot.storage.k8s.io/v1
+  kind: VolumeSnapshotClass
+  metadata:
+    name: aws-ebs-snapshotter
+  driver: ebs.csi.aws.com
+  deletionPolicy: Retain   # or Delete
+
+  Take snapshot:
+  apiVersion: snapshot.storage.k8s.io/v1
+  kind: VolumeSnapshot
+  metadata:
+    name: postgres-snapshot-2024-01-15
+    namespace: production
+  spec:
+    volumeSnapshotClassName: aws-ebs-snapshotter
+    source:
+      persistentVolumeClaimName: postgres-data-pvc
+
+  # CSI driver creates EBS snapshot → creates VolumeSnapshotContent
+  kubectl get volumesnapshot -n production
+  # NAME                       READYTOUSE  SOURCEPVC          AGE
+  # postgres-snapshot-2024..   true        postgres-data-pvc  2m
+
+Restore from snapshot:
+  apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: postgres-restored-pvc
+    namespace: production
+  spec:
+    storageClassName: gp3-encrypted
+    dataSource:
+      name: postgres-snapshot-2024-01-15
+      kind: VolumeSnapshot
+      apiGroup: snapshot.storage.k8s.io
+    accessModes: [ReadWriteOnce]
+    resources:
+      requests:
+        storage: 100Gi   # must be >= original size
+
+  # CSI driver: creates EBS volume from snapshot → binds to PVC
+
+Automated snapshots via CronJob:
+  apiVersion: batch/v1
+  kind: CronJob
+  metadata:
+    name: postgres-snapshot-schedule
+  spec:
+    schedule: "0 2 * * *"   # 2am daily
+    jobTemplate:
+      spec:
+        template:
+          spec:
+            serviceAccountName: snapshot-manager  # needs snapshot RBAC
+            containers:
+            - name: snapshot-creator
+              image: bitnami/kubectl:latest
+              command:
+              - /bin/sh
+              - -c
+              - |
+                DATE=$(date +%Y%m%d-%H%M)
+                kubectl apply -f - <<EOF
+                apiVersion: snapshot.storage.k8s.io/v1
+                kind: VolumeSnapshot
+                metadata:
+                  name: postgres-snap-${DATE}
+                  namespace: production
+                spec:
+                  volumeSnapshotClassName: aws-ebs-snapshotter
+                  source:
+                    persistentVolumeClaimName: postgres-data-pvc
+                EOF
+                # Delete snapshots older than 7 days
+                kubectl get volumesnapshot -n production \
+                  --sort-by=.metadata.creationTimestamp -o name | \
+                  head -n -7 | xargs kubectl delete -n production
+
+Cross-namespace restore:
+  Snapshot is namespace-scoped but VolumeSnapshotContent is cluster-scoped
+  # In target namespace, reference the VolumeSnapshotContent:
+  apiVersion: snapshot.storage.k8s.io/v1
+  kind: VolumeSnapshot
+  metadata:
+    name: restored-snap
+    namespace: staging      # different namespace
+  spec:
+    source:
+      volumeSnapshotContentName: snapcontent-xyz  # cluster-scoped ref
+
+If original PVC deleted:
+  → Snapshot NOT deleted (snapshot has its own lifecycle)
+  → deletionPolicy: Retain → VolumeSnapshotContent remains
+  → deletionPolicy: Delete → VolumeSnapshotContent (and underlying EBS snapshot) deleted
+  → Always use Retain for production backup snapshots
+```
+
+> 💡 **Interview tip:** The most common production issue with VolumeSnapshots: forgetting `deletionPolicy: Retain` on the VolumeSnapshotClass. With the default `Delete` policy, if someone accidentally deletes the VolumeSnapshot object in Kubernetes, the actual underlying EBS snapshot is also deleted — losing your backup. Always use `Retain` for production snapshot classes. Also: snapshot consistency — for databases, you need to flush/freeze writes before snapshotting (use pre-snapshot hooks or a database-aware backup tool like Velero with restic for application-consistent snapshots).
+
+---
+
+### Q415 — AWS | Conceptual | Advanced
+
+> Explain **AWS Batch** — when would you use it over Lambda, ECS, or EKS? What is a **Compute Environment**, **Job Queue**, and **Job Definition**? How does Batch handle **Spot instance interruptions**? Design a batch pipeline processing 10,000 genomics files with dependency ordering.
+
+📁 **Reference:** `nawab312/AWS` — AWS Batch, compute environments, job queues sections
+
+#### Key Points to Cover:
+```
+When to use AWS Batch vs alternatives:
+  Lambda:     max 15 min, 10GB memory, no GPU → NOT for long/large batch
+  ECS/EKS:    you manage scheduling, retries, dependencies → DIY batch
+  AWS Batch:  managed job scheduling, retries, dependencies, cost optimization
+  → Use Batch: jobs > 15 min, need GPU, complex dependencies, cost optimization
+
+Key concepts:
+  Compute Environment (CE):
+  → Defines the infrastructure for running batch jobs
+  → Managed: Batch creates/terminates EC2/Fargate automatically
+  → Unmanaged: you provide EC2 instances (advanced)
+
+  Managed CE with Spot:
+  aws batch create-compute-environment \
+    --compute-environment-name genomics-spot \
+    --type MANAGED \
+    --state ENABLED \
+    --compute-resources '{
+      "type": "SPOT",
+      "allocationStrategy": "SPOT_CAPACITY_OPTIMIZED",
+      "minvCpus": 0,
+      "maxvCpus": 10000,
+      "desiredvCpus": 0,
+      "instanceTypes": ["optimal"],
+      "subnets": ["subnet-a", "subnet-b", "subnet-c"],
+      "securityGroupIds": ["sg-batch"],
+      "instanceRole": "arn:aws:iam::123:instance-profile/BatchRole",
+      "bidPercentage": 60,
+      "spotIamFleetRole": "arn:aws:iam::123:role/SpotFleetRole"
+    }'
+
+  Job Queue:
+  → Ordered priority queue: jobs submitted here wait for compute
+  → Associates with one or more CEs (fallback order)
+  aws batch create-job-queue \
+    --job-queue-name genomics-queue \
+    --priority 100 \
+    --compute-environment-order \
+      order=1,computeEnvironment=genomics-spot \
+      order=2,computeEnvironment=genomics-ondemand   # fallback
+
+  Job Definition:
+  → Template for jobs (image, vCPUs, memory, command)
+  aws batch register-job-definition \
+    --job-definition-name process-genome \
+    --type container \
+    --container-properties '{
+      "image": "123.dkr.ecr.us-east-1.amazonaws.com/genome-processor:v2",
+      "vcpus": 4,
+      "memory": 8192,
+      "jobRoleArn": "arn:aws:iam::123:role/BatchJobRole",
+      "environment": [{"name": "S3_BUCKET", "value": "genomics-data"}],
+      "mountPoints": [{"containerPath": "/tmp", "readOnly": false, "sourceVolume": "tmp"}]
+    }'
+
+Spot interruption handling:
+  → Batch automatically retries on Spot interruption
+  → Set: attempts: 3 in job definition
+  → SPOT_CAPACITY_OPTIMIZED: reduces interruption rate
+  → Checkpointing: jobs should save progress to S3 periodically
+  → Application must handle SIGTERM gracefully (2-min notice)
+
+10,000 file pipeline with dependencies:
+  # Step 1: Array job for parallel processing (10,000 files):
+  aws batch submit-job \
+    --job-name process-files \
+    --job-queue genomics-queue \
+    --job-definition process-genome \
+    --array-properties size=10000   # creates 10,000 child jobs
+
+  # Step 2: Aggregation job depends on Step 1:
+  aws batch submit-job \
+    --job-name aggregate-results \
+    --job-queue genomics-queue \
+    --job-definition aggregate \
+    --depends-on '[{"jobId":"step1-job-id","type":"N_TO_N"}]'
+    # N_TO_N: wait for ALL 10,000 array children to complete
+
+  # Index in job: AWS_BATCH_JOB_ARRAY_INDEX env var
+  # Job reads file: s3://bucket/input/file_${AWS_BATCH_JOB_ARRAY_INDEX}.fastq
+```
+
+> 💡 **Interview tip:** The **array job + dependency** pattern is the core AWS Batch capability that makes it better than DIY ECS scheduling. With `size=10000` array, Batch creates 10,000 child jobs and manages parallelism automatically — you don't need any orchestration code. The child jobs get `AWS_BATCH_JOB_ARRAY_INDEX` (0-9999) to identify their work slice. The downstream aggregation job with `N_TO_N` dependency automatically waits for all 10,000 to complete before starting. For Spot: always set `attempts: 3` and design jobs to be idempotent (safe to retry) — with Spot you WILL get interruptions at scale.
+
+---
+
+### Q416 — Prometheus | Scenario-Based | Advanced
+
+> Implement **Alertmanager high availability** — multiple instances, gossip protocol, deduplication of notifications. Write the Kubernetes StatefulSet for a 3-replica Alertmanager HA cluster.
+
+📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Prometheus` — Alertmanager HA sections
+
+#### Key Points to Cover:
+```
+Problem with single Alertmanager:
+  → Single point of failure
+  → If AM crashes: alerts still fire in Prometheus but nowhere to send
+  → Solution: run 3+ Alertmanager instances in cluster mode
+
+Gossip protocol (Memberlist):
+  → Alertmanager uses memberlist (based on SWIM protocol)
+  → Peers discover each other via --cluster.peer flag
+  → Share state: silences, inhibitions, notification history
+  → Deduplication: if alert fires, only ONE instance sends notification
+  → Mechanism: first instance to claim alert wins, others see it in gossip
+
+Prometheus sends to ALL Alertmanager instances:
+  alerting:
+    alertmanagers:
+    - static_configs:
+      - targets:
+        - alertmanager-0.alertmanager:9093
+        - alertmanager-1.alertmanager:9093
+        - alertmanager-2.alertmanager:9093
+  # Prometheus fires same alert to all 3
+  # Gossip ensures only ONE sends the PagerDuty/Slack notification
+
+Kubernetes StatefulSet:
+  apiVersion: apps/v1
+  kind: StatefulSet
+  metadata:
+    name: alertmanager
+    namespace: monitoring
+  spec:
+    serviceName: alertmanager
+    replicas: 3
     selector:
       matchLabels:
-        app: nodejs-app
-    endpoints:
-    - port: http-metrics
-      interval: 30s
+        app: alertmanager
+    template:
+      spec:
+        containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+          - --config.file=/etc/alertmanager/alertmanager.yml
+          - --storage.path=/alertmanager
+          - --cluster.listen-address=0.0.0.0:9094
+          - --cluster.peer=alertmanager-0.alertmanager.monitoring.svc:9094
+          - --cluster.peer=alertmanager-1.alertmanager.monitoring.svc:9094
+          - --cluster.peer=alertmanager-2.alertmanager.monitoring.svc:9094
+          ports:
+          - containerPort: 9093   # HTTP API
+          - containerPort: 9094   # cluster gossip
+          volumeMounts:
+          - name: config
+            mountPath: /etc/alertmanager
+          - name: storage
+            mountPath: /alertmanager
+        volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+    volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi
 
-Step 4 — PromQL queries:
+  # Headless service for DNS (required for gossip):
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: alertmanager
+    namespace: monitoring
+  spec:
+    clusterIP: None    # headless
+    selector:
+      app: alertmanager
+    ports:
+    - name: http
+      port: 9093
+    - name: cluster
+      port: 9094
 
-  # Request rate over last 5 minutes:
-  sum(rate(http_requests_total[5m]))
-
-  # Request rate per route:
-  sum by(route) (rate(http_requests_total[5m]))
-
-  # p99 latency for /api/checkout:
-  histogram_quantile(0.99,
-    sum by(le) (
-      rate(http_request_duration_seconds_bucket{route="/api/checkout"}[5m])
-    )
-  )
-
-  # 5xx error percentage:
-  sum(rate(http_requests_total{status_code=~"5.."}[5m]))
-  /
-  sum(rate(http_requests_total[5m]))
-  * 100
-
-  # RED dashboard all-in-one:
-  # Rate:   sum(rate(http_requests_total[5m]))
-  # Errors: sum(rate(http_requests_total{status_code=~"5.."}[5m]))
-  # Durat:  histogram_quantile(0.99, sum by(le)(rate(http_request_duration_seconds_bucket[5m])))
+Deduplication mechanism:
+  → Each Alertmanager has nonce (random ID at startup)
+  → Alert received → hash(labels + nonce) → stored in shared gossip state
+  → Other instances see alert already claimed → skip notification
+  → Silence/inhibit set on one → propagated to all via gossip
+  → Silence: fires notification once, other instances see silence → no duplicate
 ```
 
-> 💡 **Interview tip:** Use **Histogram (not Summary)** for latency in Kubernetes — Histograms can be aggregated across multiple pods (`sum by(le)`), Summaries cannot. With 10 pods, `histogram_quantile` correctly calculates p99 across all 10 pods. Summary calculates per-pod and cannot be aggregated. Also mention: always add a `/metrics` endpoint secured with network policy or basic auth — you don't want metrics exposed publicly. The `prom-client` `collectDefaultMetrics()` is often overlooked but provides CPU, memory, event loop lag, GC metrics for free.
+> 💡 **Interview tip:** The critical Alertmanager HA detail: Prometheus must be configured to send to **all** Alertmanager instances (not just one). If Prometheus only sends to one AM, and that AM goes down, alerts are lost. The gossip handles **deduplication** (preventing N notifications for N instances) but not **routing** (Prometheus still sends to each instance). Headless service is mandatory for gossip — StatefulSet DNS gives stable names (`alertmanager-0.alertmanager`) that don't change when pods restart, which is required because `--cluster.peer` addresses must be stable.
 
 ---
 
-### Q52 — Kubernetes | Troubleshooting | Advanced
+### Q417 — Kubernetes | Troubleshooting | Advanced
 
-> A Node in your Kubernetes cluster shows status **`NotReady`**. Pods on that node are being evicted. Walk through your complete troubleshooting process.
+> Your Istio-enabled cluster is showing `503 Service Unavailable` between services that worked yesterday. No changes were deployed. Walk through diagnosing Istio-specific 503s covering Envoy logs, `istioctl proxy-status`, `istioctl analyze`, mTLS mismatches, and DestinationRule/VirtualService misconfiguration.
 
-📁 **Reference:** `nawab312/Kubernetes` → `09_CLUSTER_OPERATIONS.md`, `14_TROUBLESHOOTING.md`
+📁 **Reference:** `nawab312/Kubernetes` → `11_ISTIO_SERVICE_MESH.md`
 
 #### Key Points to Cover:
 ```
-Step 1 — Identify the node and get details:
-  kubectl get nodes
-  kubectl describe node <node-name>
-  # Look at: Conditions section (MemoryPressure, DiskPressure, PIDPressure, Ready)
-  # Look at: Events section (what happened recently)
+Step 1 — Check Envoy proxy logs (most informative):
+  kubectl logs <pod-name> -c istio-proxy | grep -E "503|error|UF|UH|UR"
+  # Envoy response flags:
+  # UF = Upstream connection failure
+  # UH = No healthy upstream (no healthy endpoints)
+  # UR = Upstream remote reset
+  # UC = Upstream connection timeout
+  # NR = No route (no matching VirtualService/DestinationRule)
+  # "503 UH" = no healthy upstream hosts → endpoint issue
 
-Step 2 — Check node conditions:
-  Condition      Status  Meaning
-  Ready          False   kubelet not communicating
-  MemoryPressure True    Node running out of memory
-  DiskPressure   True    Node running out of disk
-  PIDPressure    True    Too many processes
+Step 2 — Check proxy-status (config sync):
+  istioctl proxy-status
+  # Shows: each pod and whether Envoy config is SYNCED with Istiod
+  # If STALE: Istiod pushed config that pod hasn't received yet
+  # If ERROR: config push failed → old config being used
 
-Step 3 — SSH into the node:
-  ssh ec2-user@<node-ip>
+  # Get full config for specific pod:
+  istioctl proxy-config cluster <pod> -n <namespace>
+  istioctl proxy-config endpoint <pod> -n <namespace>
+  # Check: is the target service's endpoints visible to this pod?
 
-  # Check kubelet status:
-  systemctl status kubelet
-  journalctl -u kubelet -n 100 --no-pager
-  # Most common: kubelet stopped, failed to connect to API server
+Step 3 — Run analyze for config issues:
+  istioctl analyze -n production
+  # Checks: VirtualService pointing to non-existent hosts
+  # Checks: DestinationRule subset not matching any pods
+  # Checks: mTLS policy conflicts
+  # Output: warnings and errors with explanation
 
-  # Check container runtime:
-  systemctl status containerd   # or docker
-  crictl ps                     # list running containers
+Step 4 — mTLS policy mismatch (common 503 cause):
+  # Strict mTLS on service B but service A has no sidecar:
+  kubectl get peerauthentication -A
+  kubectl get destinationrule -A
 
-  # Check disk:
-  df -h
-  du -sh /var/lib/kubelet/* - shows what inside kubelet's folder is eating disk:
+  # Check if namespace has STRICT mTLS:
+  kubectl get peerauthentication default -n production -o yaml
+  # If mtls.mode: STRICT → all traffic must be mTLS
+  # If caller pod has no sidecar → 503
 
-  1.2G   /var/lib/kubelet/config.yaml
-   45G   /var/lib/kubelet/pods          ← pods using 45GB (emptyDir, volumes)
-  512M   /var/lib/kubelet/plugins
-   200M  /var/lib/kubelet/pki
-  
-  45GB in /pods means some pod has written massive data to its volume.
-  That is your culprit.
+  # Temporary debug: change to PERMISSIVE:
+  kubectl patch peerauthentication default -n production \
+    --type='json' -p='[{"op":"replace","path":"/spec/mtls/mode","value":"PERMISSIVE"}]'
+  # If 503 disappears → it's an mTLS issue (caller missing sidecar)
 
-  du -sh /var/log/containers/*
+Step 5 — Check VirtualService/DestinationRule:
+  kubectl get virtualservice,destinationrule -n production
 
-  # Check memory:
-  free -h
-  cat /proc/meminfo
+  # Common mistake: DestinationRule subset label doesn't match pods:
+  kubectl get destinationrule backend -n production -o yaml
+  # spec.subsets[0].labels: version=v1
+  # But pods have label: version=v2 → 503 NR
 
-  # Check certificates:
-  ls /var/lib/kubelet/pki/
-  openssl x509 -in /var/lib/kubelet/pki/kubelet.crt -noout -dates
-  # Expired cert = kubelet can't auth to API server → NotReady
+  # Common mistake: VirtualService host incorrect:
+  # host: backend (should be backend.production.svc.cluster.local)
 
-Step 4 — Common fixes:
-  # Restart kubelet:
-  systemctl restart kubelet
-  systemctl restart containerd
+Step 6 — Check if sidecar injected:
+  kubectl get pod <backend-pod> -o yaml | grep -A5 containers
+  # Should have: istio-proxy container
+  # If missing: namespace label missing (istio-injection: enabled)?
+  kubectl get namespace production --show-labels
 
-  # Clear disk:
-  crictl rmi --prune    # remove unused images
-  journalctl --vacuum-size=500M
-
-  # If certificate expired:
-  # Rotate node certificates or rejoin node to cluster
-
-Step 5 — If node unrecoverable, drain and replace:
-  kubectl cordon <node-name>       # stop new pods scheduling
-  kubectl drain <node-name> \      # evict existing pods
-    --ignore-daemonsets \
-    --delete-emptydir-data
-  # Terminate EC2 instance → ASG replaces with fresh node
-  kubectl delete node <node-name>  # remove from cluster state
-
-Step 6 — Investigate pod evictions:
-  kubectl get events -n <namespace> | grep Evicted
-  kubectl describe pod <evicted-pod>
-  # Reason: Node pressure, resource limits exceeded
+Step 7 — Envoy access logs for full trace:
+  istioctl dashboard envoy <pod>   # opens Envoy admin UI
+  # Or enable access logging in mesh config:
+  kubectl edit configmap istio -n istio-system
+  # accessLogFile: /dev/stdout
 ```
 
-> 💡 **Interview tip:** The most common NotReady cause in production: **kubelet stopped** (usually due to expired certificates or disk pressure). The fastest diagnostic: `systemctl status kubelet` — if it's failed, `journalctl -u kubelet -n 50` shows exactly why. Expired certificates are very common in clusters created 1 year ago — kubelet certs default to 1-year expiry. Also mention: when a node is NotReady, Kubernetes waits `node-monitor-grace-period` (default 40s) before marking pods for eviction, then waits `pod-eviction-timeout` (default 5min) before actually evicting — this adds up to ~5.5 minutes of potential impact before pods move.
+> 💡 **Interview tip:** Istio 503s without recent deployments almost always fall into two categories: **(1) mTLS policy mismatch** — a new pod was added to the mesh without a sidecar, or a new namespace was labeled for mTLS but a caller still has `DISABLE` in DestinationRule, or **(2) DestinationRule subset label mismatch** — the subset labels in DestinationRule don't match actual pod labels, so Envoy routes to the subset but finds 0 healthy endpoints (503 UH). The command `istioctl analyze` catches both issues automatically and is always the second command to run (after checking Envoy logs for the response flag).
 
 ---
 
-### Q53 — AWS | Conceptual | Advanced
+### Q418 — AWS | Scenario-Based | Advanced
 
-> Explain the difference between **AWS CloudWatch**, **AWS CloudTrail**, and **AWS Config**. Give a real-world example of each and how they complement each other in security and compliance.
+> Implement **IPv6 for a new EKS cluster** — enabling dual-stack on VPC/subnets, configuring EKS for IPv6-only pod networking, VPC CNI IPv6 assignment, Security Group rules for IPv6, services that don't support IPv6, and egress-only internet gateway.
 
-📁 **Reference:** `nawab312/AWS` — CloudWatch, CloudTrail, AWS Config sections
+📁 **Reference:** `nawab312/AWS` and `nawab312/Kubernetes`
 
 #### Key Points to Cover:
 ```
-CloudWatch — METRICS AND MONITORING:
-  → Collects metrics, logs, events from AWS services
-  → Real-time monitoring of operational health
-  → Alarms, dashboards, anomaly detection
-  → Use: "Is my EC2 CPU high RIGHT NOW?"
-  → Use: "Alert me when RDS connections exceed 100"
-  → Stores: numeric metrics + log data
-  → Log Insights: query logs with SQL-like syntax
+Why IPv6 for EKS:
+  → Corporate IPv4 exhaustion (RFC 1918 address space used up)
+  → EKS with VPC CNI: each pod gets REAL VPC IP (not NATed)
+  → Large clusters need many IPs: 1000 pods × 1 IP = 1000 IPs from VPC
 
-CloudTrail — API AUDIT TRAIL:
-  → Records EVERY API call made in your AWS account
-  → Who did what, when, from where
-  → Answers: "Who deleted that S3 bucket?"
-  → Answers: "Who changed this Security Group at 2am?"
-  → Stores: JSON records of API calls (90 days default, S3 for longer)
-  → Use: security investigations, compliance audits, forensics
-  → CloudTrail Insights: detect unusual API activity patterns
+IPv6 VPC setup:
+  # 1. Add IPv6 CIDR to VPC (AWS assigns /56):
+  aws ec2 associate-vpc-cidr-block \
+    --vpc-id vpc-abc123 \
+    --amazon-provided-ipv6-cidr-block
 
-AWS Config — RESOURCE CONFIGURATION HISTORY:
-  → Continuously records configuration state of AWS resources
-  → Answers: "What did this Security Group look like 6 months ago?"
-  → Answers: "Which EC2 instances have public IPs?"
-  → Config Rules: evaluate compliance (is S3 bucket public? fail)
-  → Remediation: auto-fix non-compliant resources
-  → Use: compliance, config drift detection, resource inventory
+  # 2. Add IPv6 CIDR to subnets (AWS assigns /64 from the /56):
+  aws ec2 associate-subnet-cidr-block \
+    --subnet-id subnet-abc \
+    --ipv6-cidr-block 2600:1f18:1234:5600::/64
 
-Real-world example — Security incident:
-  Scenario: S3 bucket with customer data became publicly accessible
+  # 3. Route table for IPv6:
+  # Public subnet: ::/0 → Internet Gateway
+  # Private subnet: ::/0 → Egress-Only Internet Gateway (EOIG)
 
-  CloudWatch:  "S3 GetObject requests spiked 10,000% at 3am" (detected)
-  CloudTrail:  "PutBucketPolicy API called by user john@company.com
-                from IP 203.x.x.x at 2:47am" (who did it)
-  AWS Config:  "S3 bucket 'customer-data' changed from PRIVATE to PUBLIC
-                at 2:47am. Previous config: BlockPublicAccess=true" (what changed)
+EKS IPv6 cluster:
+  # Create EKS with IPv6 (eksctl):
+  apiVersion: eksctl.io/v1alpha5
+  kind: ClusterConfig
+  metadata:
+    name: my-cluster
+    region: us-east-1
+  kubernetesNetworkConfig:
+    ipFamily: IPv6     # pods get IPv6, services get IPv6
 
-Together:
-  CloudWatch  → operational health + alerting (real-time)
-  CloudTrail  → who/what/when API audit (forensics)
-  AWS Config  → resource compliance + config history (governance)
+  # VPC CNI with IPv6:
+  kubectl set env daemonset aws-node -n kube-system \
+    ENABLE_IPv6=true \
+    ENABLE_PREFIX_DELEGATION=true
+
+IPv6-only pods:
+  → Each pod gets: IPv6 from VPC subnet (/128 = single address)
+  → Pods communicate directly via IPv6 (no NAT)
+  → Node gets /80 IPv6 prefix, pods allocated from this prefix
+  → kubectl get pod -o wide → shows IPv6 address
+
+Security Groups for IPv6:
+  # SGs now need BOTH IPv4 and IPv6 rules:
+  aws ec2 authorize-security-group-ingress \
+    --group-id sg-abc123 \
+    --ip-permissions '[{
+      "IpProtocol": "tcp",
+      "FromPort": 443,
+      "ToPort": 443,
+      "Ipv6Ranges": [{"CidrIpv6": "::/0", "Description": "HTTPS from anywhere IPv6"}]
+    }]'
+
+Services NOT supporting IPv6 (gotchas):
+  → Route53 private hosted zones: IPv6 queries work fine
+  → S3: supports IPv6 (dualstack endpoint: s3.dualstack.us-east-1.amazonaws.com)
+  → CloudFront: supports IPv6
+  → NOT supported: some older RDS engines, ElastiCache in some regions
+  → NOT supported: NLB in some configurations
+
+Egress-Only Internet Gateway (EOIG):
+  → IPv6 equivalent of NAT Gateway
+  → Allows: IPv6 pods → internet (outbound)
+  → Blocks: internet → IPv6 pods (no unsolicited inbound)
+  → Required for private subnets with IPv6
+
+  aws ec2 create-egress-only-internet-gateway \
+    --vpc-id vpc-abc123
+
+  # Route table for private subnet:
+  aws ec2 create-route \
+    --route-table-id rtb-private \
+    --destination-ipv6-cidr-block ::/0 \
+    --egress-only-internet-gateway-id eigw-abc123
 ```
 
-> 💡 **Interview tip:** A common interview trick: "Are CloudTrail and CloudWatch the same thing?" They are NOT. CloudWatch = operational metrics (CPU, memory, request count). CloudTrail = API audit log (who called what API). The analogy: CloudWatch is like your server health monitor, CloudTrail is like your security camera footage. For compliance (PCI-DSS, HIPAA, SOC2), **CloudTrail must be enabled in all regions** with log file integrity validation — this proves logs weren't tampered with. AWS Config + Config Rules is the **automated compliance checker** — define rules once, AWS continuously checks all resources and reports non-compliant ones.
+> 💡 **Interview tip:** The key IPv6 + EKS interview insight: EKS IPv6 mode gives pods **real globally-routable IPv6 addresses** directly in the VPC — no NAT, no secondary IP management tricks. This is cleaner than IPv4 VPC CNI which uses complex prefix delegation and secondary ENI management. The trade-off: IPv6 requires dual-stack testing (some code assumes `127.0.0.1` instead of `::1`), and some AWS services still require IPv4. The **egress-only internet gateway** is the IPv6 version of NAT Gateway — it's stateful (allows established connections) but blocks unsolicited inbound, matching NAT Gateway's behavior for outbound-only internet access.
 
 ---
 
-### Q54 — Git | Scenario-Based | Advanced
+### Q419 — Grafana | Conceptual | Advanced
 
-> Your team uses **GitFlow**. A critical bug is found in production. Fix it immediately without waiting for the feature branch cycle, deploy to production, and ensure the fix is in the development branch. Walk through the **exact Git commands**.
+> Explain **Grafana Plugins** — the 3 types (panel, data source, app plugins). How do you install and manage plugins in Kubernetes-deployed Grafana? What is the plugin development framework?
 
-📁 **Reference:** `nawab312/CI_CD` → `Git` — GitFlow hotfix workflow sections
+📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Grafana`
 
 #### Key Points to Cover:
 ```
-GitFlow hotfix workflow:
+3 Plugin Types:
 
-# Current state:
-# main   → production code (v1.2.0)
-# develop → next release work
-# feature/new-auth → in-progress feature
+  Panel Plugins:
+  → New visualization types (beyond built-in bar/line/gauge)
+  → Examples: grafana-piechart-panel, grafana-worldmap-panel
+  → clock-panel (shows current time), histogram panel
+  → Implemented in: TypeScript/React
+  → Registered via: plugin.json with type: "panel"
 
-# Step 1: Create hotfix branch FROM main (not develop):
-git checkout main
-git pull origin main
-git checkout -b hotfix/fix-payment-null-pointer
+  Data Source Plugins:
+  → Connect Grafana to new data backends
+  → Examples: grafana-github-datasource, grafana-gitlab-datasource
+  → Snowflake, Oracle, MQTT, InfluxDB v3
+  → Implements: query, annotation, and variable interfaces
 
-# Step 2: Fix the bug:
-# ... make code changes ...
-git add src/payment/PaymentService.java
-git commit -m "fix: resolve null pointer in payment processing"
+  App Plugins:
+  → Full applications embedded in Grafana
+  → Bundle: panels + data sources + pages + configuration
+  → Examples: Grafana k6 app, Grafana OnCall, Grafana Incident
+  → Can add new pages to Grafana nav
+  → Enterprise: Grafana Machine Learning, Kubernetes monitoring app
 
-# Step 3: Bump version (hotfix = patch version):
-# Update version: 1.2.0 → 1.2.1
-git add version.txt
-git commit -m "chore: bump version to 1.2.1"
+Plugin installation methods:
 
-# Step 4: Merge hotfix into MAIN:
-git checkout main
-git merge --no-ff hotfix/fix-payment-null-pointer
-git tag -a v1.2.1 -m "Hotfix: fix payment null pointer"
-git push origin main
-git push origin v1.2.1
-# → CI/CD pipeline triggers production deployment
+  In Kubernetes (Helm values):
+  grafana:
+    plugins:
+    - grafana-clock-panel 2.1.0
+    - grafana-piechart-panel 1.6.4
+    - grafana-worldmap-panel 0.3.3
+    - yesoreyeram-boomtable-panel
 
-# Step 5: Merge hotfix into DEVELOP (critical — don't lose the fix):
-git checkout develop
-git pull origin develop
-git merge --no-ff hotfix/fix-payment-null-pointer
-# Resolve conflicts if any (develop may have diverged)
-git push origin develop
+  Environment variable:
+  env:
+    GF_INSTALL_PLUGINS: "grafana-clock-panel 2.1.0,grafana-piechart-panel"
 
-# Step 6: Delete hotfix branch:
-git branch -d hotfix/fix-payment-null-pointer
-git push origin --delete hotfix/fix-payment-null-pointer
+  Init container (for unsigned/custom plugins):
+  initContainers:
+  - name: install-plugins
+    image: grafana/grafana:10.2.0
+    command:
+    - grafana-cli
+    - --pluginsDir=/var/lib/grafana/plugins
+    - plugins
+    - install
+    - my-custom-plugin
+    volumeMounts:
+    - name: plugins
+      mountPath: /var/lib/grafana/plugins
 
-# Step 7: Verify on develop that fix is there:
-git log develop --oneline | head -5
-# Should see: "fix: resolve null pointer in payment processing"
+  Allow unsigned plugins (development):
+  env:
+    GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "my-custom-plugin"
 
-# Why hotfix branches from MAIN (not develop):
-# develop has unreleased features that aren't ready for production
-# hotfix from main = only the fix goes to prod, no half-baked features
+Plugin development framework:
+  → @grafana/toolkit (deprecated) → now: @grafana/plugin-tools
+  → npx @grafana/create-plugin@latest → scaffolds new plugin
+  → React-based UI with Grafana's design system (@grafana/ui)
+  → APIs: PanelPlugin, DataSourcePlugin, AppPlugin
+  → Testing: @grafana/e2e for end-to-end Grafana plugin tests
 
-# Emergency: if too urgent for CI/CD pipeline review:
-# Pair with another engineer, do code review manually
-# Deploy directly from hotfix branch
-# Then follow merge steps above
+  Panel plugin structure:
+  src/
+    module.ts     → entry point, registers plugin
+    plugin.json   → metadata (type, name, version)
+    components/
+      SimplePanel.tsx  → React component for visualization
+
+  Key API:
+  export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel)
+    .setPanelOptions(builder => {
+      builder.addTextInput({ path: 'text', name: 'Text' });
+    });
 ```
 
-> 💡 **Interview tip:** The critical step most candidates forget: **merging hotfix into BOTH main AND develop**. If you only merge into main, the fix is in production but the next release (from develop) will re-introduce the bug. The `--no-ff` flag creates a merge commit even when fast-forward is possible — this preserves the history of "this was a hotfix branch" in the log. Also: if develop has conflicts with the hotfix, resolve them carefully — the hotfix must apply cleanly to both branches without breaking develop's in-progress features.
+> 💡 **Interview tip:** For production Kubernetes Grafana deployments, always pin plugin versions in Helm values (`grafana-clock-panel 2.1.0` not just `grafana-clock-panel`). Unpinned plugins update on pod restart, potentially breaking dashboards. Also: the **Grafana plugin catalog** includes both signed (verified by Grafana) and unsigned plugins. Unsigned plugins require explicit `GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS` in config — this is a security consideration. For custom internal plugins that can't be published to the catalog, use an init container to copy them into the plugins directory at startup.
 
 ---
 
-### Q55 — Jenkins | Conceptual | Advanced
+### Q420 — Linux / Bash | Scenario-Based | Advanced
 
-> Explain the difference between **Declarative** and **Scripted** Jenkins pipelines. Also explain what **Shared Libraries** are and give a real-world example.
+> Write a **Bash script** that implements automatic kernel parameter tuning: detects server role from config, applies role-specific sysctl settings, rolls back if health check fails, makes settings persistent, and generates a before/after comparison report.
 
-📁 **Reference:** `nawab312/CI_CD` → `Jenkins` — pipeline types and Shared Libraries sections
+📁 **Reference:** `nawab312/DSA` → `Linux` — sysctl, kernel tuning sections
+
+#### Key Points to Cover:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="${1:-/etc/server-role.conf}"
+SYSCTL_DIR="/etc/sysctl.d"
+TUNING_FILE="${SYSCTL_DIR}/99-performance-tuning.conf"
+BACKUP_FILE="/tmp/sysctl-backup-$(date +%Y%m%d-%H%M%S).conf"
+LOG_FILE="/var/log/kernel-tuning.log"
+HEALTH_CHECK_URL="${HEALTH_CHECK_URL:-http://localhost:8080/health}"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
+
+detect_role() {
+    if [ -f "$CONFIG_FILE" ]; then
+        grep "^ROLE=" "$CONFIG_FILE" | cut -d= -f2
+    elif systemctl is-active nginx &>/dev/null; then echo "web"
+    elif systemctl is-active postgresql &>/dev/null; then echo "database"
+    elif systemctl is-active redis &>/dev/null; then echo "cache"
+    else echo "generic"
+    fi
+}
+
+declare -A SETTINGS_WEB=(
+    ["net.core.somaxconn"]="65535"
+    ["net.ipv4.tcp_max_syn_backlog"]="65535"
+    ["net.core.netdev_max_backlog"]="65535"
+    ["net.ipv4.tcp_tw_reuse"]="1"
+    ["fs.file-max"]="2097152"
+)
+declare -A SETTINGS_DATABASE=(
+    ["vm.swappiness"]="10"
+    ["vm.dirty_ratio"]="10"
+    ["vm.dirty_background_ratio"]="3"
+    ["kernel.shmmax"]="68719476736"
+    ["kernel.shmall"]="4294967296"
+    ["net.ipv4.tcp_keepalive_time"]="300"
+)
+declare -A SETTINGS_CACHE=(
+    ["vm.overcommit_memory"]="1"
+    ["net.core.somaxconn"]="65535"
+    ["vm.swappiness"]="0"
+)
+declare -A SETTINGS_GENERIC=(
+    ["net.ipv4.tcp_fin_timeout"]="30"
+    ["net.core.somaxconn"]="4096"
+    ["fs.file-max"]="1048576"
+)
+
+get_current_value() { sysctl -n "$1" 2>/dev/null || echo "N/A"; }
+
+validate_bounds() {
+    local key="$1" value="$2"
+    case "$key" in
+        vm.swappiness) [[ "$value" -ge 0 && "$value" -le 100 ]] ;;
+        net.core.somaxconn) [[ "$value" -ge 128 && "$value" -le 65535 ]] ;;
+        *) return 0 ;;  # no bounds check for others
+    esac
+}
+
+backup_current() {
+    log "Backing up current settings to $BACKUP_FILE"
+    sysctl -a 2>/dev/null | grep -v "^sysctl:" > "$BACKUP_FILE"
+}
+
+apply_settings() {
+    local -n settings=$1
+    local role="$2"
+    log "Applying $role settings..."
+    echo "# Auto-generated by kernel-tuning.sh - role: $role" > "$TUNING_FILE"
+    echo "# Applied: $(date)" >> "$TUNING_FILE"
+    for key in "${!settings[@]}"; do
+        value="${settings[$key]}"
+        if ! validate_bounds "$key" "$value"; then
+            log "WARNING: $key=$value is out of safe bounds, skipping"
+            continue
+        fi
+        current=$(get_current_value "$key")
+        if sysctl -w "${key}=${value}" >> "$LOG_FILE" 2>&1; then
+            log "  SET: $key = $current → $value"
+            echo "${key} = ${value}" >> "$TUNING_FILE"
+        else
+            log "  FAILED: $key = $value"
+        fi
+    done
+}
+
+health_check() {
+    local max_attempts=3
+    for i in $(seq 1 $max_attempts); do
+        if curl -sf --max-time 5 "$HEALTH_CHECK_URL" > /dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
+rollback() {
+    log "ROLLING BACK to backup $BACKUP_FILE"
+    rm -f "$TUNING_FILE"
+    while IFS=' = ' read -r key value; do
+        sysctl -w "${key}=${value}" 2>/dev/null || true
+    done < "$BACKUP_FILE"
+    sysctl -p "$SYSCTL_DIR/" 2>/dev/null || true
+}
+
+generate_report() {
+    local role="$1"
+    local -n settings=$2
+    echo "========================================"
+    echo "KERNEL TUNING REPORT — $(date)"
+    echo "Role: $role"
+    echo "========================================"
+    printf "%-40s %-20s %-20s\n" "Parameter" "Before" "After"
+    printf "%-40s %-20s %-20s\n" "---------" "------" "-----"
+    for key in "${!settings[@]}"; do
+        before=$(grep "^${key} = " "$BACKUP_FILE" 2>/dev/null | awk '{print $3}' || echo "N/A")
+        after=$(get_current_value "$key")
+        printf "%-40s %-20s %-20s\n" "$key" "$before" "$after"
+    done
+}
+
+main() {
+    log "=== Starting kernel tuning ==="
+    local role
+    role=$(detect_role)
+    log "Detected server role: $role"
+    backup_current
+
+    case "$role" in
+        web)      apply_settings SETTINGS_WEB      "web" ;;
+        database) apply_settings SETTINGS_DATABASE "database" ;;
+        cache)    apply_settings SETTINGS_CACHE    "cache" ;;
+        *)        apply_settings SETTINGS_GENERIC  "generic" ;;
+    esac
+
+    sysctl -p "$TUNING_FILE" 2>&1 | tee -a "$LOG_FILE"
+    sleep 10
+
+    if ! health_check; then
+        log "ERROR: Health check failed after tuning — rolling back"
+        rollback
+        exit 1
+    fi
+
+    log "Health check passed — settings retained"
+    generate_report "$role" "SETTINGS_$(echo $role | tr '[:lower:]' '[:upper:]')" | tee -a "$LOG_FILE"
+    log "=== Kernel tuning complete ==="
+}
+
+main "$@"
+```
+
+> 💡 **Interview tip:** The two production-critical parts of this script: **(1) backup before applying** — sysctl changes are immediate and can break network connectivity if wrong (e.g., `net.ipv4.ip_forward=0` kills routing). **(2) health check after applying** with automatic rollback. Never apply kernel settings in production without a rollback path. The `validate_bounds` function prevents catastrophic values — `vm.swappiness=200` is technically accepted by sysctl but causes undefined behavior. Also: write to `/etc/sysctl.d/99-performance-tuning.conf` NOT `/etc/sysctl.conf` — this allows clean removal (just delete the file) without touching the system default config.
+
+---
+
+### Q421 — Kubernetes | Conceptual | Advanced
+
+> Explain **Kubernetes `ImagePolicyWebhook`** admission controller. How does it differ from **OPA Gatekeeper** for image policy? Write a Gatekeeper `ConstraintTemplate` and `Constraint` that blocks `latest` tag, only allows approved registries, and requires digest-based image references.
+
+📁 **Reference:** `nawab312/Kubernetes` → `07_SECURITY.md`
 
 #### Key Points to Cover:
 ```
-Declarative Pipeline:
-  → Structured, opinionated syntax
-  → Requires specific blocks: pipeline{}, agent{}, stages{}, steps{}
-  → Built-in validation (syntax errors caught before run)
-  → Easier to read, recommended for most use cases
-  → Limited flexibility (within the Declarative syntax)
+ImagePolicyWebhook:
+  → Built-in admission controller (not enabled by default)
+  → Calls external webhook for EVERY pod admission
+  → Webhook decides: allow or deny based on image metadata
+  → Simple: only acts on image names, not full pod spec
+  → Limited: binary allow/deny, no mutation
 
-  pipeline {
-    agent { kubernetes { yaml '...' } }
-    environment { IMAGE_TAG = "${GIT_COMMIT[0..7]}" }
-    stages {
-      stage('Test') {
-        steps { sh 'npm test' }
-      }
-      stage('Build') {
-        steps { sh 'docker build .' }
-      }
-    }
-    post {
-      failure { slackSend channel: '#alerts', message: "FAILED" }
-    }
-  }
+  Enable: --enable-admission-plugins=ImagePolicyWebhook
+  Config: --admission-control-config-file=admission-config.yaml
 
-Scripted Pipeline:
-  → Free-form Groovy code
-  → Wraps everything in node{} block
-  → Full Groovy language available
-  → More flexible but harder to read
-  → Use when Declarative can't express what you need
+  admission-config.yaml:
+  apiVersion: apiserver.config.k8s.io/v1
+  kind: AdmissionConfiguration
+  plugins:
+  - name: ImagePolicyWebhook
+    configuration:
+      imagePolicy:
+        kubeConfigFile: /etc/kubernetes/image-policy-kubeconfig.yaml
+        allowTTL: 50
+        denyTTL: 50
+        retryBackoff: 500
+        defaultAllow: false   # deny if webhook unavailable
 
-  node('agent-label') {
-    stage('Test') {
-      def result = sh(script: 'npm test', returnStatus: true)
-      if (result != 0) {
-        currentBuild.result = 'UNSTABLE'
-        // complex logic here
-      }
-    }
-  }
+ImagePolicyWebhook vs OPA Gatekeeper:
+  ImagePolicyWebhook:    simple, only images, requires maintaining webhook service
+  OPA Gatekeeper:        policy-as-code in cluster, full pod spec access, Rego language
+  Kyverno:               simpler YAML-based policies, no Rego required
 
-When to use Scripted:
-  → Complex conditional logic
-  → Dynamic stage generation
-  → Advanced error handling
-  → Most projects use Declarative; Scripted is for edge cases
+OPA Gatekeeper ConstraintTemplate:
+  # Template defines the policy logic (Rego):
+  apiVersion: templates.gatekeeper.sh/v1
+  kind: ConstraintTemplate
+  metadata:
+    name: k8simagevalidation
+  spec:
+    crd:
+      spec:
+        names:
+          kind: K8sImageValidation
+        validation:
+          openAPIV3Schema:
+            properties:
+              allowedRegistries:
+                type: array
+                items:
+                  type: string
+    targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8simagevalidation
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          image := container.image
+          # Block 'latest' tag:
+          endswith(image, ":latest")
+          msg := sprintf("Container '%v' uses 'latest' tag. Use specific version.", [container.name])
+        }
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          image := container.image
+          # Require approved registry:
+          not any_approved(image)
+          msg := sprintf("Container '%v' image '%v' not from approved registry.", [container.name, image])
+        }
+        any_approved(image) {
+          registry := input.parameters.allowedRegistries[_]
+          startswith(image, registry)
+        }
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          image := container.image
+          # Require digest (@sha256:):
+          not contains(image, "@sha256:")
+          msg := sprintf("Container '%v' must use digest-based reference (@sha256:...).", [container.name])
+        }
 
-Shared Libraries:
-  Problem: 50 microservices each have their own Jenkinsfile
-           All have the same Docker build + ECR push + K8s deploy logic
-           Change needed → update 50 Jenkinsfiles
+  # Constraint (applies policy to cluster):
+  apiVersion: constraints.gatekeeper.sh/v1beta1
+  kind: K8sImageValidation
+  metadata:
+    name: require-approved-images
+  spec:
+    match:
+      kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    parameters:
+      allowedRegistries:
+      - "123456789.dkr.ecr.us-east-1.amazonaws.com/"
+      - "gcr.io/my-org/"
 
-  Solution: Shared Library = reusable Groovy code in a Git repo
+  # Test:
+  kubectl create deployment test --image=nginx:latest
+  # Error: Container 'nginx' uses 'latest' tag
+```
 
-  # Structure:
-  jenkins-shared-library/
-    vars/
-      buildAndPush.groovy    ← global function (call like a step)
-      deployToK8s.groovy
-    src/
-      com/company/Utils.groovy ← class-based helpers
+> 💡 **Interview tip:** The **digest requirement** is the strongest supply chain security control. A tag like `nginx:1.25` is mutable — the registry can push a different image to the same tag. `nginx@sha256:abc123...` is immutable — that exact digest always refers to that exact image. CI/CD pipelines should: build → push → get digest → commit digest to GitOps repo → Gatekeeper enforces digest-only. Cosign adds another layer: not just "is this a digest?" but "is this digest signed by our CI/CD pipeline?" Kyverno is often preferred over Gatekeeper for simpler teams because Rego learning curve is steep.
 
-  # vars/buildAndPush.groovy:
-  def call(Map config) {
-    sh "docker build -t ${config.registry}/${config.image}:${config.tag} ."
-    sh "docker push ${config.registry}/${config.image}:${config.tag}"
-  }
+---
 
-  # In any Jenkinsfile across all repos:
-  @Library('jenkins-shared-library') _
-  pipeline {
-    stages {
-      stage('Build') {
-        steps {
-          buildAndPush(registry: '123.ecr.aws', image: 'myapp', tag: GIT_COMMIT)
+### Q422 — AWS | Conceptual | Advanced
+
+> Explain **AWS EventBridge Pipes** — how it differs from standard EventBridge rules. What is the **enrichment** step? Design a Pipe from DynamoDB stream → filter INSERT events → enrich via Lambda → target SQS.
+
+📁 **Reference:** `nawab312/AWS` — EventBridge Pipes, DynamoDB streams sections
+
+#### Key Points to Cover:
+```
+EventBridge Rules vs Pipes:
+  EventBridge Rules:
+  → Fan-out: one event → many targets
+  → No transformation between source and target
+  → Filter at rule level (event pattern)
+  → Point-to-point from source to target
+
+  EventBridge Pipes:
+  → Point-to-point pipeline with enrichment
+  → Source → Filter → Enrich → Transform → Target
+  → Reduces Lambda "glue code" (no custom Lambda to read SQS → call API → write SQS)
+  → Managed polling of sources (SQS, Kinesis, DynamoDB streams)
+
+Pipe stages:
+  1. Source (polling-based):
+     → SQS queue, Kinesis stream, DynamoDB stream, Kafka
+     → Batch size: how many events to deliver at once
+
+  2. Filter (optional):
+     → Filter events before enrichment (reduce cost)
+     → JSONPath expressions on event body
+
+  3. Enrichment (optional):
+     → API Gateway, Lambda, Step Functions
+     → Adds data to the event before passing to target
+     → Lambda receives batch of events, returns enriched events
+
+  4. Target:
+     → SQS, SNS, EventBridge event bus, Lambda, Step Functions, etc.
+
+DynamoDB Stream → SQS pipeline:
+  # Terraform:
+  resource "aws_pipes_pipe" "order_processor" {
+    name     = "order-processor-pipe"
+    role_arn = aws_iam_role.pipes_role.arn
+
+    source = aws_dynamodb_table.orders.stream_arn
+    source_parameters {
+      dynamodb_stream_parameters {
+        starting_position = "LATEST"
+        batch_size        = 10
+        # Filter: only INSERT events:
+        filter_criteria {
+          filter {
+            pattern = jsonencode({
+              eventName = ["INSERT"]
+            })
+          }
         }
       }
     }
+
+    # Enrichment: call Lambda to add customer data:
+    enrichment = aws_lambda_function.enrich_order.arn
+    enrichment_parameters {
+      input_template = jsonencode({
+        orderId    = "<$.dynamodb.NewImage.orderId.S>"
+        customerId = "<$.dynamodb.NewImage.customerId.S>"
+      })
+    }
+
+    # Target: SQS for processing:
+    target = aws_sqs_queue.order_processing.arn
+    target_parameters {
+      sqs_queue_parameters {
+        message_deduplication_id = "<$.orderId>"
+        message_group_id         = "order-processing"
+      }
+    }
   }
 
-  Benefits:
-  → One change in library → all pipelines updated
-  → Version the library (tag v1.2.3, pin pipelines to version)
-  → Unit test Groovy code with JenkinsPipelineUnit
+  # Lambda enrichment function:
+  def handler(events, context):
+      enriched = []
+      for event in events:
+          customer = dynamodb.get_item(
+              TableName='customers',
+              Key={'customerId': {'S': event['customerId']}}
+          )
+          event['customerEmail'] = customer['Item']['email']['S']
+          enriched.append(event)
+      return enriched
+
+Pipes vs Lambda fan-out:
+  Lambda fan-out: you write code to poll source, filter, call API, write target
+  Pipes: declare the pipeline in config, no polling code needed
+  Pipes benefit: automatic retry, error handling, batching managed by AWS
+  Pipes limit: limited enrichment steps (one Lambda/API GW) vs complex Lambda logic
 ```
 
-> 💡 **Interview tip:** Shared Libraries are the **DRY principle applied to Jenkins** — the most important Jenkins architectural pattern for large teams. The key selling point: security fixes in the build process (e.g., adding a Trivy scan step) get applied to ALL pipelines by updating one library, not 50 Jenkinsfiles. Version pinning (`@Library('lib@v1.2.3')`) prevents accidental breaking changes — test the new library version on one pipeline before rolling out to all. Always mention that vars/ functions are `def call(Map config)` pattern — this is the idiomatic Jenkins shared library entrypoint.
+> 💡 **Interview tip:** EventBridge Pipes is the answer to "how do you connect DynamoDB streams to SQS without writing polling Lambda code?" The key is the **enrichment step** — before Pipes, you'd need a Lambda to: poll DynamoDB stream, filter inserts, call another service to enrich, write to SQS. With Pipes, that's all declarative configuration. The most important production consideration: **enrichment Lambda is synchronous** — if it's slow, your pipe is slow. Design enrichment for < 100ms. For complex enrichment (multiple API calls), still use a separate Lambda as target, not enrichment.
 
 ---
 
-### Q56 — Kubernetes | Conceptual | Advanced
+### Q423 — ArgoCD | Conceptual | Advanced
 
-> Explain how **Kubernetes DNS** works. What happens step-by-step when a Pod requests `backend.production.svc.cluster.local`? What is **ndots** and how does it affect DNS performance?
+> Explain **ArgoCD ApplicationSet Generators** in depth — SCM Provider generator, Pull Request generator, Cluster Decision Resource generator, and Plugin generator. Walk through the Pull Request generator for PR preview environments.
 
-📁 **Reference:** `nawab312/Kubernetes` → `03_NETWORKING.md`
+📁 **Reference:** `nawab312/CI_CD` → `ArgoCD` — ApplicationSet generators sections
 
 #### Key Points to Cover:
 ```
-Kubernetes DNS architecture:
-  → CoreDNS runs as Deployment in kube-system namespace
-  → Every Pod's /etc/resolv.conf points to CoreDNS ClusterIP
-  → CoreDNS watches K8s API → builds DNS records for Services
+Why generators beyond List/Git/Cluster:
+  List/Git generators: static or directory-based
+  Advanced generators: dynamic — auto-create apps based on external state
 
-DNS record types:
-  Service:   backend.production.svc.cluster.local → ClusterIP
-  Pod:       1-2-3-4.production.pod.cluster.local → Pod IP
-  Headless:  returns individual Pod IPs (StatefulSet use case)
+SCM Provider Generator:
+  → Scans ALL repos in a GitHub/GitLab org
+  → Creates one Application per matching repo
+  → Use: auto-onboard every team's service without manual Application creation
 
-Step-by-step resolution of backend.production.svc.cluster.local:
-  1. Pod makes DNS query
-  2. Query sent to CoreDNS (IP from /etc/resolv.conf)
-  3. CoreDNS receives: backend.production.svc.cluster.local
-  4. CoreDNS checks: is this a known Service?
-     → Yes: backend Service in production namespace exists
-  5. Returns: ClusterIP of the backend Service (e.g., 10.96.100.50)
-  6. Pod connects to ClusterIP → kube-proxy routes to Pod endpoint
-
-ndots and the search path problem:
-  /etc/resolv.conf in every Pod:
-    search production.svc.cluster.local svc.cluster.local cluster.local
-    options ndots:5
-
-  ndots:5 means: if the query has fewer than 5 dots → try search domains first
-
-  Example: querying "backend" (0 dots < 5):
-    1. Try: backend.production.svc.cluster.local → ✅ found (1 query)
-    
-  Example: querying "google.com" (1 dot < 5):
-    1. Try: google.com.production.svc.cluster.local → NXDOMAIN (fail)
-    2. Try: google.com.svc.cluster.local → NXDOMAIN (fail)
-    3. Try: google.com.cluster.local → NXDOMAIN (fail)
-    4. Try: google.com → ✅ found (4 queries for 1 external lookup!)
-
-  Performance impact:
-  → Every external DNS lookup = 3 wasted queries before resolving
-  → High-traffic pods making external calls → DNS latency spike
-
-  Fixes:
-  # Option 1: Use FQDN (trailing dot):
-  curl http://backend.production.svc.cluster.local.  # 5 dots = direct
-
-  # Option 2: Set ndots:1 in dnsConfig:
   spec:
-    dnsConfig:
-      options:
-      - name: ndots
-        value: "1"
-    # Reduces search attempts for external domains
+    generators:
+    - scmProvider:
+        github:
+          organization: my-org
+          tokenRef:
+            secretName: github-token
+            key: token
+        filters:
+        - repositoryMatch: ".*-service$"    # only repos ending in -service
+        - pathsExist: ["k8s/"]              # only repos with k8s/ directory
+    template:
+      metadata:
+        name: '{{repository}}-prod'
+      spec:
+        source:
+          repoURL: '{{url}}'
+          path: k8s/
+          targetRevision: main
 
-  # Option 3: Use internal service short names within same namespace
-  # (pods in production namespace): curl http://backend  (0 dots, found immediately)
+Pull Request Generator (preview environments):
+  → Watches open PRs on GitHub/GitLab
+  → Creates temporary Application for each open PR
+  → Deletes Application when PR merged/closed
+
+  spec:
+    generators:
+    - pullRequest:
+        github:
+          owner: my-org
+          repo: payment-service
+          tokenRef:
+            secretName: github-token
+            key: token
+          labels:
+          - preview           # only PRs with 'preview' label
+    template:
+      metadata:
+        name: 'payment-pr-{{number}}'
+      spec:
+        source:
+          repoURL: https://github.com/my-org/payment-service
+          path: k8s/
+          targetRevision: '{{head_sha}}'   # PR's HEAD commit
+          helm:
+            values: |
+              image.tag: pr-{{number}}-{{head_sha}}
+              ingress.host: payment-pr-{{number}}.preview.company.com
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: 'preview-pr-{{number}}'   # isolated namespace
+        syncPolicy:
+          automated:
+            prune: true
+          syncOptions:
+          - CreateNamespace=true
+
+  Result per PR:
+  → Namespace: preview-pr-123
+  → Ingress: payment-pr-123.preview.company.com
+  → App deployed from PR's exact commit SHA
+  → Deleted when PR closed (prune: true)
+
+Cluster Decision Resource Generator:
+  → Reads a custom K8s resource (CRD) to determine target clusters
+  → Use: cluster selection based on custom criteria
+  → Example: ClusterSelector CR defines which clusters get which apps
+
+Plugin Generator:
+  → Calls external API/script to generate parameters
+  → Use: when no built-in generator fits
+  → ArgoCD calls: GET /api/v1/getparams
+  → Response: list of parameters → one Application per parameter set
 ```
 
-> 💡 **Interview tip:** The **ndots performance issue** is a real production problem that most candidates don't know about. In a microservice making 100 external API calls per second, the default ndots:5 means 300 wasted DNS queries per second. The fix for external calls: always use FQDN with trailing dot, or reduce ndots. The fix for internal calls: use short service names within the same namespace (they resolve with the first search domain). Mention **CoreDNS caching** — CoreDNS caches responses, so repeated queries for the same name are fast. The issue is the first lookup for each unique external domain.
+> 💡 **Interview tip:** The **Pull Request generator** is increasingly the standard pattern for feature branch testing. The key implementation detail: use `{{head_sha}}` in `targetRevision` (not branch name) — this ensures the preview environment is pinned to the exact commit, not the latest push to the branch. This prevents the PR environment from changing while a reviewer is testing it. Also: add a Namespace cleanup job (CronJob that deletes namespaces older than 7 days) because PRs can be abandoned without being closed, leaving preview environments running indefinitely.
 
 ---
 
-### Q57 — Linux / Bash | Scenario-Based | Advanced
+### Q424 — Terraform | Conceptual | Advanced
 
-> Write a Bash script that: takes servers from `servers.txt`, SSHes to each **in parallel**, runs `df -h`, outputs a consolidated report showing servers where disk usage is **above 80%**, and handles SSH failures gracefully.
+> Explain **Terraform `import` blocks** (Terraform 1.5+) vs the older `terraform import` CLI. What is **`terraform plan -generate-config-out`** and how does it auto-generate `.tf` config? Walk through importing an existing VPC with subnets, route tables, and NACLs.
 
-📁 **Reference:** `nawab312/DSA` → `Linux` — Bash scripting, SSH, parallel execution sections
+📁 **Reference:** `nawab312/Terraform` — import blocks, config generation sections
+
+#### Key Points to Cover:
+```
+Old CLI import (Terraform < 1.5):
+  terraform import aws_vpc.main vpc-abc123
+  # Problems:
+  # 1. Imports to state BUT doesn't generate .tf config
+  # 2. You must write the resource block manually (error-prone)
+  # 3. Cannot be reviewed in PR (it's a CLI command)
+  # 4. Not declarative (imperative CLI step)
+
+New Import Blocks (Terraform 1.5+):
+  # Declare in .tf file (reviewable, version-controlled):
+  import {
+    to = aws_vpc.main
+    id = "vpc-abc123"
+  }
+
+  import {
+    to = aws_subnet.public_1
+    id = "subnet-aaa111"
+  }
+
+  import {
+    to = aws_subnet.public_2
+    id = "subnet-bbb222"
+  }
+
+  import {
+    to = aws_route_table.public
+    id = "rtb-ccc333"
+  }
+
+  import {
+    to = aws_network_acl.main
+    id = "acl-ddd444"
+  }
+
+Generate config automatically (TF 1.6+):
+  terraform plan -generate-config-out=generated.tf
+
+  # Terraform reads the import blocks
+  # Queries AWS for actual resource configuration
+  # Writes generated .tf with real values:
+
+  # generated.tf (auto-generated):
+  resource "aws_vpc" "main" {
+    cidr_block           = "10.0.0.0/16"
+    enable_dns_hostnames = true
+    enable_dns_support   = true
+    tags = {
+      Name        = "production-vpc"
+      Environment = "production"
+    }
+  }
+
+  resource "aws_subnet" "public_1" {
+    vpc_id            = aws_vpc.main.id
+    cidr_block        = "10.0.1.0/24"
+    availability_zone = "us-east-1a"
+    tags = {
+      Name = "public-subnet-1"
+    }
+  }
+
+Workflow for existing infrastructure:
+
+  Step 1: Write import blocks for all resources:
+  # imports.tf
+  import { to = aws_vpc.main;    id = "vpc-abc123" }
+  import { to = aws_subnet.pub1; id = "subnet-111" }
+  import { to = aws_subnet.pub2; id = "subnet-222" }
+
+  Step 2: Generate config:
+  terraform plan -generate-config-out=generated.tf
+  # Review generated.tf carefully
+
+  Step 3: Clean up generated config:
+  # Remove: computed attributes (id, arn)
+  # Fix: references (use resource refs, not hardcoded IDs)
+  # Add: lifecycle blocks where needed
+
+  Step 4: Run plan → should show no changes:
+  terraform plan
+  # Goal: "No changes. Your infrastructure matches the configuration."
+
+  Step 5: Apply imports:
+  terraform apply
+  # Imports resources to state, makes no infrastructure changes
+
+  Step 6: Remove import blocks (one-time use):
+  # Delete imports.tf — no longer needed
+
+Import blocks vs CLI import difference:
+  CLI: one resource at a time, not reviewable, not in version control
+  Import blocks: all in one file, PR reviewable, declarative, can be planned first
+  Generate config: eliminates manual .tf writing (the hardest part)
+```
+
+> 💡 **Interview tip:** `terraform plan -generate-config-out` is a **game-changer for brownfield adoption**. The old workflow required writing Terraform config manually to match every AWS attribute — tedious and error-prone. With generate-config-out, Terraform introspects AWS and writes the config for you. The critical post-generation step: **replace hardcoded IDs with resource references**. Generated config will have `vpc_id = "vpc-abc123"` — change it to `vpc_id = aws_vpc.main.id`. This creates proper dependency graph and prevents stale IDs after resource replacement.
+
+---
+
+### Q425 — Kubernetes | Scenario-Based | Advanced
+
+> Implement **defense-in-depth using Kubernetes NetworkPolicy AND Istio AuthorizationPolicy** — only `frontend` can call `backend` on `/api/*` paths, only GET/POST allowed, only authenticated service accounts, all other traffic denied at both layers.
+
+📁 **Reference:** `nawab312/Kubernetes` → `03_NETWORKING.md`, `11_ISTIO_SERVICE_MESH.md`
+
+#### Key Points to Cover:
+```
+Two-layer defense:
+  Layer 1: Kubernetes NetworkPolicy (L3/L4) — which pod IPs can connect
+  Layer 2: Istio AuthorizationPolicy (L7) — which paths/methods/service accounts
+
+  Why both? Defense in depth:
+  → NetworkPolicy: even if Istio sidecar is bypassed → L3 block
+  → AuthorizationPolicy: even if NetworkPolicy has broad IP ranges → L7 block
+  → Together: attacker needs to bypass BOTH layers
+
+Kubernetes NetworkPolicy (L3/L4 enforcement):
+  # Default deny all in namespace:
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: default-deny-all
+    namespace: production
+  spec:
+    podSelector: {}          # applies to all pods
+    policyTypes: [Ingress, Egress]
+
+  # Allow frontend → backend on port 8080:
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: allow-frontend-to-backend
+    namespace: production
+  spec:
+    podSelector:
+      matchLabels:
+        app: backend
+    policyTypes: [Ingress]
+    ingress:
+    - from:
+      - podSelector:
+          matchLabels:
+            app: frontend      # only from frontend pod
+      ports:
+      - protocol: TCP
+        port: 8080
+
+  # Allow DNS (always needed):
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: allow-dns-egress
+    namespace: production
+  spec:
+    podSelector: {}
+    policyTypes: [Egress]
+    egress:
+    - ports:
+      - protocol: UDP
+        port: 53
+
+Istio AuthorizationPolicy (L7 enforcement):
+  # Deny all by default (Istio):
+  apiVersion: security.istio.io/v1beta1
+  kind: AuthorizationPolicy
+  metadata:
+    name: deny-all
+    namespace: production
+  spec:
+    {}          # empty spec = deny all
+
+  # Allow only frontend → backend, specific paths, methods, SA:
+  apiVersion: security.istio.io/v1beta1
+  kind: AuthorizationPolicy
+  metadata:
+    name: allow-frontend-backend
+    namespace: production
+  spec:
+    selector:
+      matchLabels:
+        app: backend
+    action: ALLOW
+    rules:
+    - from:
+      - source:
+          principals:
+          - "cluster.local/ns/production/sa/frontend-service-account"
+          # mTLS: identity comes from cert issued to this service account
+      to:
+      - operation:
+          paths: ["/api/*"]          # only /api/ paths
+          methods: ["GET", "POST"]   # no DELETE, PUT, PATCH
+    # Everything else: implicitly DENY (because deny-all policy exists)
+
+Verification:
+  # Test allowed: frontend → backend /api/orders GET
+  kubectl exec -it frontend-pod -- \
+    curl -H "Authorization: Bearer $TOKEN" \
+    http://backend:8080/api/orders
+
+  # Test denied: frontend → backend /admin GET
+  kubectl exec -it frontend-pod -- \
+    curl http://backend:8080/admin
+  # Expected: 403 Forbidden (Istio AuthorizationPolicy)
+
+  # Test denied: other-pod → backend
+  kubectl exec -it other-pod -- curl http://backend:8080/api/orders
+  # Expected: connection refused (NetworkPolicy blocks at L3)
+
+  # Check denials in Envoy logs:
+  kubectl logs backend-pod -c istio-proxy | grep "RBAC: access denied"
+```
+
+> 💡 **Interview tip:** The key insight for defense-in-depth: NetworkPolicy and Istio AuthorizationPolicy enforce at different levels. NetworkPolicy runs in the **kernel** (via iptables/eBPF) before the packet even reaches the pod. AuthorizationPolicy runs in the **Envoy sidecar** after the connection is established. A sophisticated attacker might bypass Envoy (e.g., connecting directly to the pod IP on a non-Istio port). NetworkPolicy catches this at the kernel level. However, AuthorizationPolicy can enforce based on mTLS identity (which service account is calling) — something NetworkPolicy can't do. Together: network identity + workload identity = comprehensive zero-trust.
+
+---
+
+### Q426 — AWS | Scenario-Based | Advanced
+
+> Implement **AWS Glue ETL pipeline**: Glue crawler updates Data Catalog from S3, transforms JSON logs to Parquet with date partitioning, handles schema evolution, runs on schedule triggered by S3 events, retries + SNS alerts on failure.
+
+📁 **Reference:** `nawab312/AWS` — AWS Glue, ETL, Data Catalog sections
+
+#### Key Points to Cover:
+```
+AWS Glue components:
+  Crawler:     discovers data in S3 → creates/updates table definitions
+  Data Catalog: metadata repository (schemas, table definitions)
+  ETL Job:     PySpark/Scala script that transforms data
+  Trigger:     schedules or event-driven job execution
+  Workflow:    orchestrates multiple jobs/crawlers
+
+Step 1 — Crawler setup:
+  aws glue create-crawler \
+    --name raw-logs-crawler \
+    --role arn:aws:iam::123:role/GlueRole \
+    --database-name logs_db \
+    --targets '{"S3Targets": [{"Path": "s3://my-bucket/raw-logs/"}]}' \
+    --schema-change-policy '{"UpdateBehavior":"UPDATE_IN_DATABASE","DeleteBehavior":"LOG"}'
+    # UPDATE_IN_DATABASE: adds new columns automatically (schema evolution)
+
+Step 2 — ETL Job (JSON → Parquet with partitions):
+  import sys
+  from awsglue.transforms import *
+  from awsglue.utils import getResolvedOptions
+  from pyspark.context import SparkContext
+  from awsglue.context import GlueContext
+  from awsglue.job import Job
+  from pyspark.sql.functions import year, month, dayofmonth, to_date
+
+  args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+  sc = SparkContext()
+  glueContext = GlueContext(sc)
+  spark = glueContext.spark_session
+  job = Job(glueContext)
+  job.init(args['JOB_NAME'], args)
+
+  # Read from catalog:
+  datasource = glueContext.create_dynamic_frame.from_catalog(
+      database="logs_db",
+      table_name="raw_logs"
+  )
+  df = datasource.toDF()
+
+  # Handle schema evolution: add missing columns with nulls:
+  expected_columns = ['timestamp', 'level', 'message', 'service', 'trace_id']
+  for col in expected_columns:
+      if col not in df.columns:
+          df = df.withColumn(col, lit(None).cast(StringType()))
+
+  # Add partition columns:
+  df = df.withColumn("date", to_date("timestamp")) \
+         .withColumn("year", year("date")) \
+         .withColumn("month", month("date")) \
+         .withColumn("day", dayofmonth("date"))
+
+  # Write as Parquet with partitioning:
+  df.write \
+    .mode("append") \
+    .partitionBy("year", "month", "day") \
+    .parquet("s3://my-bucket/processed-logs/")
+
+  # Update catalog with new partitions:
+  glueContext.write_dynamic_frame.from_options(
+      frame=DynamicFrame.fromDF(df, glueContext, "processed"),
+      connection_type="s3",
+      connection_options={
+          "path": "s3://my-bucket/processed-logs/",
+          "partitionKeys": ["year", "month", "day"]
+      },
+      format="parquet"
+  )
+  job.commit()
+
+Step 3 — Event-driven trigger (S3 → Glue):
+  # S3 event → EventBridge → Glue workflow:
+  aws glue create-trigger \
+    --name s3-arrival-trigger \
+    --type EVENT \
+    --workflow-name logs-pipeline \
+    --actions '[{"JobName": "json-to-parquet"}]' \
+    --event-batching-condition '{"BatchSize": 10, "BatchWindow": 900}'
+  # Batches: wait for 10 files or 15 minutes, then trigger
+
+Step 4 — Retry + SNS alert:
+  aws glue create-job \
+    --name json-to-parquet \
+    --max-retries 3 \
+    --notification-property '{"NotifyDelayAfter": 10}'
+
+  # EventBridge rule for failure:
+  # Event: {"source": ["aws.glue"], "detail-type": ["Glue Job State Change"],
+  #         "detail": {"state": ["FAILED"]}}
+  # Target: SNS topic → email/PagerDuty
+```
+
+> 💡 **Interview tip:** The most production-critical Glue configuration: `--schema-change-policy UpdateBehavior=UPDATE_IN_DATABASE`. Without this, when new fields are added to source JSON, the crawler fails or ignores them. With it, the crawler automatically adds new columns to the Data Catalog table definition. In the ETL job, always handle missing columns explicitly (`if col not in df.columns: add null column`) — Glue's DynamicFrame handles schema evolution somewhat automatically, but explicit handling prevents null pointer errors when downstream code expects specific columns.
+
+---
+
+### Q427 — Linux / Bash | Conceptual | Advanced
+
+> Explain **Linux eBPF** — what is the difference between classic BPF and eBPF? What are eBPF programs and where are they attached? What are eBPF maps? Give 5 real-world DevOps/SRE use cases. Why is eBPF safer than kernel modules?
+
+📁 **Reference:** `nawab312/DSA` → `Linux` — eBPF, kernel observability sections
+
+#### Key Points to Cover:
+```
+Classic BPF vs eBPF:
+  Classic BPF (cBPF, 1992):
+  → Originally only for packet filtering (tcpdump)
+  → 2 registers, simple instruction set
+  → Only attachable to: network sockets
+
+  Extended BPF (eBPF, 2014+):
+  → 11 registers, 64-bit, full instruction set
+  → Attachable to: MANY kernel subsystems
+  → Can pass data between kernel and userspace (maps)
+  → Verified by kernel before loading (safety)
+
+Where eBPF programs attach:
+  Network:     XDP (eXpress Data Path) — packet processing before kernel network stack
+               TC (Traffic Control) — ingress/egress packet filtering
+               Socket filters — per-socket packet inspection
+  Tracing:     kprobes — any kernel function entry/exit
+               uprobes — any userspace function entry/exit
+               tracepoints — static kernel instrumentation points
+               perf events — hardware performance counters
+  Security:    LSM (Linux Security Module) — enforce security policies
+  Scheduler:   sched hooks — observe/modify scheduling decisions
+
+eBPF Maps (kernel-userspace communication):
+  → Shared data structures between eBPF program and userspace
+  → Types: hash, array, ring buffer, LRU hash, per-CPU
+  → eBPF writes metrics/events → userspace reads and processes
+  → Example: latency histogram built in kernel, read periodically by monitor
+
+eBPF vs kernel modules:
+  Kernel module:    full kernel access, crash = kernel panic, no safety check
+  eBPF:             verifier checks before loading, sandboxed, crash-safe
+  → eBPF verifier: proves program terminates, no out-of-bounds access, no loops
+  → eBPF program crashes: just that program fails, kernel continues
+
+5 DevOps/SRE use cases:
+
+  1. Zero-overhead profiling (bpftrace):
+     bpftrace -e 'kprobe:do_sys_open { printf("%s %s\n", comm, str(arg1)); }'
+     # Which files is every process opening? Zero application changes needed
+
+  2. Cilium network policy + observability:
+     → Kubernetes NetworkPolicy enforced in kernel (not iptables)
+     → 100x faster policy updates vs iptables for large clusters
+     → Per-pod flow visibility: Hubble shows L7 traffic flows
+
+  3. Detecting CPU hotspots without recompile:
+     bpftrace -e 'profile:hz:99 { @[kstack] = count(); }'
+     # CPU flamegraph of ALL running processes, no code changes
+
+  4. Detecting slow syscalls:
+     bpftrace -e 'tracepoint:syscalls:sys_enter_read { @start[tid] = nsecs; }
+                  tracepoint:syscalls:sys_exit_read  { @latency = hist(nsecs - @start[tid]); }'
+     # Histogram of read() latency for every process
+
+  5. Container security (Falco with eBPF driver):
+     → Watch: execve, open, connect syscalls
+     → Alert: container executing unexpected binary
+     → Block: via LSM eBPF hook (synchronous enforcement)
+
+Key tools:
+  bpftrace:    one-liners, DTrace-like syntax
+  bcc:         Python/C framework for complex eBPF programs
+  libbpf:      C library for portable eBPF programs
+  Cilium:      Kubernetes networking using eBPF
+  Falco:       security monitoring using eBPF
+  Pixie:       auto-telemetry using eBPF (no code changes)
+```
+
+> 💡 **Interview tip:** eBPF is increasingly asked in Senior SRE interviews because it's now mainstream (Cilium, Falco, Pixie, Datadog all use it). The key selling point: **production observability without code changes or performance overhead**. Traditional profiling requires recompiling with instrumentation — eBPF instruments any running binary via kprobes/uprobes at runtime with 1-5% overhead. The safety analogy: kernel modules are like root access to the kernel — anything goes. eBPF is like a verified sandbox — the kernel verifier mathematically proves the program is safe before loading it. This is why cloud providers can safely run customer eBPF programs.
+
+---
+
+### Q428 — Prometheus | Conceptual | Advanced
+
+> Explain **Prometheus agent mode** (2.32+). What problem does it solve? How does it differ from full Prometheus — what features are disabled? When to use agent mode vs full mode? How does it integrate with `remote_write` for multi-cluster collection?
+
+📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Prometheus` — agent mode, remote_write sections
+
+#### Key Points to Cover:
+```
+Problem agent mode solves:
+  Multi-cluster setup: Prometheus in every cluster → expensive (TSDB storage per cluster)
+  Traditional workaround: Thanos sidecar/querier — complex
+  Agent mode: scrape-only Prometheus that immediately forwards, no local storage
+
+What's disabled in agent mode:
+  ❌ Local TSDB storage (no disk writes)
+  ❌ PromQL queries (no /api/v1/query endpoint)
+  ❌ Alerting rules (no alerting)
+  ❌ Recording rules (no pre-aggregation locally)
+  ❌ Grafana data source (can't point Grafana to agent)
+
+What's enabled:
+  ✅ Scraping (service discovery, scrape configs)
+  ✅ remote_write (forward metrics to central Prometheus/Thanos/Cortex)
+  ✅ WAL (Write-Ahead Log) — buffer if remote is temporarily down
+  ✅ TLS, authentication, relabeling — all scrape features
+
+Start in agent mode:
+  prometheus --enable-feature=agent \
+    --config.file=agent-config.yaml
+
+  agent-config.yaml:
+  global:
+    scrape_interval: 15s
+    external_labels:
+      cluster: prod-us-east-1    # label all metrics with cluster name
+      environment: production
+
+  remote_write:
+  - url: https://thanos-receive.monitoring.company.com/api/v1/receive
+    headers:
+      Authorization: Bearer ${THANOS_TOKEN}
+    queue_config:
+      capacity: 10000             # in-memory buffer
+      max_shards: 50              # parallel write goroutines
+      max_samples_per_send: 10000
+    write_relabel_configs:
+    - source_labels: [__name__]
+      regex: 'go_.*'              # drop Go runtime metrics (reduce cardinality)
+      action: drop
+
+  scrape_configs:
+  - job_name: kubernetes-pods
+    kubernetes_sd_configs:
+    - role: pod
+    # ... standard K8s scrape config
+
+Multi-cluster architecture with agent mode:
+  Cluster A (prod)  → Prometheus Agent → remote_write → Thanos Receive
+  Cluster B (stage) → Prometheus Agent → remote_write → Thanos Receive
+  Cluster C (dev)   → Prometheus Agent → remote_write → Thanos Receive
+                                          ↓
+                                    Thanos Store → Thanos Query → Grafana
+                                    # Central query: all clusters in one dashboard
+
+WAL behavior:
+  → If remote_write target is down: agent writes to WAL (disk)
+  → Default WAL retention: 2 hours
+  → When target recovers: agent replays WAL and forwards buffered metrics
+  → Prevents metric gaps during network issues
+
+Resource comparison:
+  Full Prometheus:  500MB-10GB disk, 2-20GB RAM (depending on retention)
+  Agent mode:       ~500MB RAM (WAL only), no disk beyond WAL
+  → Agent mode: 10x lower resource footprint per cluster
+```
+
+> 💡 **Interview tip:** Prometheus agent mode is the **modern answer to multi-cluster metrics collection**. Before agent mode, teams used Prometheus federation (pulling subsets), Thanos sidecar (syncing blocks), or Cortex pushgateway (imprecise). Agent mode is simpler: every cluster runs a lightweight agent that scrapes locally and pushes centrally — same scrape configs you already know, but no storage overhead. The `external_labels` with `cluster: name` is mandatory — without it, all clusters' metrics merge in the central store with no way to distinguish them.
+
+---
+
+### Q429 — Kubernetes | Troubleshooting | Advanced
+
+> `kubectl logs` returns `Error from server: context deadline exceeded` for a running, healthy Pod. Walk through diagnosing — kubelet log endpoint, node network, log size limits, container runtime log rotation, and how API server proxies log requests to kubelet.
+
+📁 **Reference:** `nawab312/Kubernetes` → `14_TROUBLESHOOTING.md`
+
+#### Key Points to Cover:
+```
+How kubectl logs works (architecture):
+  kubectl logs → API server → kubelet (on pod's node) → container runtime
+  → API server PROXIES the request to kubelet (not direct)
+  → kubelet reads log file from container runtime log directory
+  → Streams back through API server to kubectl
+
+  Key: API server ↔ kubelet connection can fail independently of pod health
+  Pod running + kubelet running ≠ log streaming works
+
+Diagnosis steps:
+
+  Step 1 — Identify the node:
+  kubectl get pod <pod-name> -o wide
+  # NODE: worker-node-3
+
+  Step 2 — Check API server → kubelet connectivity:
+  kubectl describe node worker-node-3 | grep -A5 Conditions
+  # If NotReady → kubelet not responding
+
+  # Test directly (from master or another node):
+  curl -k https://<node-ip>:10250/healthz
+  curl -k https://<node-ip>:10250/logs/pods/
+
+  Step 3 — Check kubelet certificate:
+  # Expired kubelet cert = API server can't authenticate to kubelet
+  ssh ec2-user@<node-ip>
+  openssl x509 -in /var/lib/kubelet/pki/kubelet.crt -noout -dates
+  # If expired → kubelet rotates certs if configured, or manual rotation needed
+
+  Step 4 — Check log file size:
+  ssh ec2-user@<node-ip>
+  ls -lh /var/log/containers/<pod-name>*.log
+  # If file is very large (>1GB): read is slow → timeout
+  # kubectl logs --tail=100 instead of full log
+
+  Step 5 — Container runtime log rotation:
+  cat /etc/containerd/config.toml | grep -A5 log
+  # Default: max_container_log_line_size / log rotation settings
+  # If containerd log driver misconfigured → no logs accessible
+
+  Step 6 — Check kubelet logs for the error:
+  journalctl -u kubelet -n 100 --no-pager | grep -i "log\|error"
+
+  Step 7 — Try --previous flag:
+  kubectl logs <pod> --previous
+  # If previous works but current doesn't → issue with current log file
+
+  Common root causes:
+  a) Massive log file (GB+): kubectl times out reading
+     Fix: kubectl logs --tail=1000 (recent lines only)
+
+  b) Expired kubelet TLS cert:
+     Fix: restart kubelet (auto-rotation) or manually rotate certs
+
+  c) Network issue between API server and node:
+     Fix: check SG/NACL between master and worker nodes (port 10250)
+
+  d) containerd log driver issue:
+     Fix: restart containerd, check config
+
+  e) Log file deleted (log rotation removed it):
+     kubectl logs → 404 from kubelet → translated as deadline exceeded
+```
+
+> 💡 **Interview tip:** "Context deadline exceeded" for logs is almost always either **(1) huge log file** or **(2) network issue between API server and kubelet (port 10250)**. The API server acts as a proxy — it opens a connection to the kubelet on port 10250 and streams the response. If the kubelet is slow to respond (big log file) or unreachable (port 10250 blocked), the API server times out. Always check `kubectl describe node` first — if the node is Ready but logs fail, the problem is almost certainly the log file size. Use `--tail=100` as a quick workaround while debugging.
+
+---
+
+### Q430 — AWS | Troubleshooting | Advanced
+
+> Your **S3 bucket** is throwing `SlowDown: Please reduce your request rate` at 10,000 requests/second. Explain S3's **prefix-based partitioning** model and how to redesign key naming to distribute load. What S3 features help high-throughput workloads?
+
+📁 **Reference:** `nawab312/AWS` — S3 performance, request rate limits sections
+
+#### Key Points to Cover:
+```
+S3 request rate limits:
+  Per prefix:
+  → 5,500 GET/HEAD requests/second
+  → 3,500 PUT/COPY/POST/DELETE requests/second
+
+  "Prefix" = first part of the key before any natural delimiter
+  s3://bucket/2024/01/15/file.json → prefix is /2024/01/15/
+  s3://bucket/user-1/photos/img.jpg → prefix is /user-1/photos/
+
+  SlowDown = single prefix exceeding its rate limit
+  Amazon S3 automatically partitions based on prefixes
+
+How prefix partitioning works:
+  → S3 internally shards data across partitions
+  → Each partition handles ~3,500 write or ~5,500 read requests/second
+  → One prefix = one partition (initially)
+  → High-traffic prefix → S3 auto-splits after sustained load
+  → But: before split happens → SlowDown errors
+
+Problem patterns (hot prefixes):
+  # ALL files in same prefix → single partition hit:
+  my-bucket/images/img1.jpg
+  my-bucket/images/img2.jpg  ← all 10,000 writes to /images/ prefix
+  my-bucket/images/img3.jpg
+
+  # Date-based prefix → all daily writes hit same prefix:
+  my-bucket/2024/01/15/log1.json  ← 10,000 writes to same date prefix
+
+Redesign: distribute across many prefixes:
+
+  Option 1 — Random prefix (hash-based):
+  import hashlib
+  def get_key(filename):
+      hash_prefix = hashlib.md5(filename.encode()).hexdigest()[:4]  # e.g., "a3f1"
+      return f"{hash_prefix}/{filename}"
+  # Keys: a3f1/image.jpg, b7c2/image.jpg, f094/image.jpg
+  # 65,536 possible prefixes → 65,536 × 3,500 = 230M writes/second max
+
+  Option 2 — Reverse timestamp prefix:
+  # Instead of: 2024/01/15/file.json (hot date prefix)
+  # Use:        51/10/4202/file.json (reversed date → distributed)
+
+  Option 3 — UUID in prefix:
+  keys = [f"{uuid4()}/{filename}" for filename in files]
+  # Each UUID is random → uniformly distributed
+
+High-throughput S3 features:
+
+  Multipart Upload:
+  → Required for files > 5GB (mandated by S3)
+  → Recommended for files > 100MB (parallel upload)
+  → Each part: 5MB-5GB
+  → Up to 10,000 parts
+  → aws s3 cp --sse aws:kms uses multipart automatically
+
+  Byte-Range Fetches:
+  # Download only part of a file (parallel download):
+  for start, end in [(0, 50MB), (50MB, 100MB), (100MB, 150MB)]:
+      s3.get_object(Bucket='b', Key='k', Range=f'bytes={start}-{end}')
+  # Combine ranges → faster for large files
+
+  S3 Transfer Acceleration:
+  → Routes uploads through CloudFront edge locations
+  → Faster for: uploads from far regions (upload to nearest edge → AWS backbone → S3)
+  → Enable: aws s3api put-bucket-accelerate-configuration
+  → URL: my-bucket.s3-accelerate.amazonaws.com
+
+  Request Rate Best Practices:
+  → Add random hash prefix to keys
+  → Use separate buckets for very high-throughput workloads
+  → Enable S3 request metrics → monitor per-prefix rates
+  → If sustained high throughput: AWS auto-partitions after ~30 min
+```
+
+> 💡 **Interview tip:** The S3 prefix partitioning model is the key insight. "Prefix" doesn't mean folder — it means the string before your first delimiter, and S3 uses it to determine which storage partition handles the request. The **random hash prefix solution** is the textbook answer: take `md5(key)[:4]` and prepend it to every key. This creates 65,536 possible prefixes, distributing load across 65,536 partitions. The trade-off: you can no longer list all files with a simple prefix query — you must query all 65,536 prefixes and merge. For write-heavy workloads (logging, analytics ingest), this tradeoff is always worth it.
+
+---
+
+### Q431 — Grafana | Scenario-Based | Advanced
+
+> Build a complete **SLO dashboard** in Grafana — rolling 30-day availability with 99.9% SLO line, error budget remaining (minutes + percentage), burn rate over 1h/6h/24h, daily SLO compliance for 30 days, and toil indicator. Write the PromQL queries.
+
+📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Grafana`, `Prometheus`
+
+#### Key Points to Cover:
+```
+SLO definitions:
+  SLO target: 99.9% availability (max 0.1% errors)
+  Error budget: 30-day rolling = 43.2 minutes total
+
+Panel 1 — Rolling 30-day Availability (Stat panel):
+  # Current availability over 30 days:
+  sum(rate(http_requests_total{status!~"5.."}[30d]))
+  /
+  sum(rate(http_requests_total[30d]))
+  # Thresholds: green ≥ 99.9%, yellow ≥ 99%, red < 99%
+  # Unit: percentunit (0.999 → 99.9%)
+
+Panel 2 — Error Budget Remaining — Minutes (Stat panel):
+  # Calculate remaining error budget in minutes:
+  (
+    (1 - (
+      sum(increase(http_requests_total{status=~"5.."}[30d]))
+      /
+      sum(increase(http_requests_total[30d]))
+    ) / (1 - 0.999))
+  ) * 43.2
+  # Result: minutes of budget remaining (43.2 = full budget for 99.9% SLO)
+  # Thresholds: green > 21.6 (>50% remaining), yellow > 4.3, red ≤ 4.3
+
+Panel 3 — Error Budget Consumed % (Gauge panel):
+  (
+    sum(increase(http_requests_total{status=~"5.."}[30d]))
+    /
+    sum(increase(http_requests_total[30d]))
+  ) / (1 - 0.999)
+  * 100
+  # 0% = no budget consumed, 100% = SLO breached
+
+Panel 4 — Error Budget Burn Rate — Multi-window (Time series):
+  # 1-hour burn rate:
+  (
+    sum(rate(http_requests_total{status=~"5.."}[1h]))
+    /
+    sum(rate(http_requests_total[1h]))
+  ) / (1 - 0.999)
+
+  # 6-hour burn rate:
+  (
+    sum(rate(http_requests_total{status=~"5.."}[6h]))
+    /
+    sum(rate(http_requests_total[6h]))
+  ) / (1 - 0.999)
+
+  # 24-hour burn rate:
+  (
+    sum(rate(http_requests_total{status=~"5.."}[24d]))
+    /
+    sum(rate(http_requests_total[24d]))
+  ) / (1 - 0.999)
+
+  # Reference lines: 1.0 = consuming at exactly SLO rate
+  # > 1.0 = burning faster than SLO allows (alert territory)
+  # > 14.4 = CRITICAL burn rate (exhausts budget in ~3 days)
+
+Panel 5 — Daily SLO Compliance (Bar chart / State timeline):
+  # Was each day compliant with SLO?
+  clamp_max(
+    floor(
+      sum by(day) (
+        sum_over_time(
+          (sum(rate(http_requests_total{status!~"5.."}[5m])) /
+           sum(rate(http_requests_total[5m])) >= bool 0.999)[1d:5m]
+        )
+      ) / (288)     # 288 5-minute intervals in a day
+    ), 1
+  )
+  # 1 = day was compliant (all 5-min windows ≥ 99.9%)
+  # 0 = day had SLO breach
+  # Use: State Timeline panel with color: 1=green, 0=red
+
+Panel 6 — Toil Indicator:
+  # Count manual interventions (from oncall runbook execution):
+  increase(runbook_executions_total[30d])
+  # OR: count of Pagerduty pages requiring human action
+  # Track: are we spending time on repetitive work?
+
+Dashboard variables:
+  $service: label_values(http_requests_total, service)
+  $slo_target: custom (99, 99.5, 99.9, 99.99)
+  # Replace hardcoded 0.999 with: (1 - $slo_target/100)
+```
+
+> 💡 **Interview tip:** The **burn rate panels** are what differentiate a good SLO dashboard from a great one. Error budget remaining tells you state; burn rate tells you velocity. A burn rate of 1.0 means you're consuming budget at exactly the SLO-expected rate (acceptable). A burn rate of 10.0 means you'll exhaust the entire month's budget in 3 days (page immediately). The multi-window approach (1h/6h/24h) catches both sudden spikes and sustained slow burns. In Grafana, set the dashboard time range to 30d to align with the rolling window in queries, and add a link to the incident runbook directly on the dashboard.
+
+---
+
+### Q432 — Kubernetes | Conceptual | Advanced
+
+> Explain **Kubernetes multi-tenancy patterns** — the 4 levels of isolation. Compare **soft multi-tenancy** (shared cluster) vs **hard multi-tenancy** (dedicated clusters). What tools implement hard multi-tenancy within a single cluster — vcluster, Capsule, HNC? When is each appropriate?
+
+📁 **Reference:** `nawab312/Kubernetes` → `07_SECURITY.md`, `06_SCHEDULING_RESOURCE_MANAGEMENT.md`
+
+#### Key Points to Cover:
+```
+4 Levels of isolation (weakest → strongest):
+
+  1. Namespace isolation (soft):
+     → Shared cluster, separate namespaces per tenant
+     → Controls: RBAC, NetworkPolicy, ResourceQuota, LimitRange
+     → Shared: API server, etcd, node kernels, control plane
+     → Blast radius: control plane bug → all tenants affected
+     → Cost: lowest (most shared)
+
+  2. Node isolation:
+     → Dedicated nodes per tenant (taints/tolerations)
+     → No shared compute but shared control plane
+     → Network: still need NetworkPolicy between node groups
+
+  3. Cluster isolation (hard):
+     → Separate Kubernetes clusters per tenant
+     → Truly independent control plane, etcd, nodes
+     → Max isolation but max operational overhead
+
+  4. VM/hardware isolation:
+     → Kata Containers, gVisor, Firecracker
+     → Container runs in lightweight VM (separate kernel)
+     → For: untrusted multi-tenant code execution
+
+Soft multi-tenancy (shared cluster):
+  Tools: RBAC + NetworkPolicy + ResourceQuota + LimitRange
+
+  RBAC:          tenant can only see own namespace
+  NetworkPolicy: default-deny cross-namespace
+  ResourceQuota: CPU/memory/pod limits per namespace
+  LimitRange:    per-container defaults
+
+  Limitations:
+  → Kubernetes API is shared (misconfigured RBAC = data leak)
+  → Control plane vulnerabilities affect all tenants
+  → Not for: hostile tenants (competing companies, external users)
+  → For: internal teams trusting each other (same organization)
+
+Hard multi-tenancy tools (virtual clusters):
+
+  vcluster:
+  → Creates a virtual Kubernetes cluster inside a namespace
+  → Tenant sees: full K8s API (create nodes, CRDs, etc.)
+  → Actually: runs on host cluster (virtualized control plane)
+  → Syncer: translates vcluster objects → host cluster pods
+  → Use: tenant needs full cluster admin, develop/test, CI environments
+  helm install vcluster vcluster/vcluster \
+    --namespace tenant-a \
+    --set vcluster.image=rancher/k3s:v1.28.0-k3s1
+
+  Capsule:
+  → Operator that creates "Tenant" CRD
+  → Tenant = collection of namespaces with shared policies
+  → Enforces: quotas, allowed registries, network policies at tenant level
+  → Single control plane, namespace-based isolation (enhanced soft multi-tenancy)
+  → Use: SaaS platform teams giving teams self-service namespace creation
+
+  HNC (Hierarchical Namespace Controller):
+  → Namespace hierarchy: parent → child namespaces
+  → Policies propagate from parent to children automatically
+  → Use: org → team → project hierarchy
+  → team-a creates child namespaces freely, inherits team-a policies
+
+Decision matrix:
+  Internal teams, same org:    Capsule or Namespace + RBAC
+  Dev/test per team:            vcluster (full K8s API per team)
+  Strict isolation (SaaS):      Separate clusters per tenant
+  Cost optimization:            vcluster or Capsule (most shared)
+  Compliance (HIPAA, PCI):      Separate clusters (regulatory requirement)
+```
+
+> 💡 **Interview tip:** **vcluster** is the most impressive answer for platform engineering interviews. It gives tenants a full Kubernetes API experience (they can install CRDs, create ClusterRoles, do anything) but it's actually running on the host cluster's worker nodes. The syncer component translates vcluster objects into host cluster resources. This is how you give 50 dev teams full k8s admin access without giving them access to production infrastructure. The cost: each vcluster has its own API server process (tiny k3s) running as a pod — lightweight but multiplied across many clusters.
+
+---
+
+### Q433 — AWS | Scenario-Based | Advanced
+
+> Implement **AWS EMR for Spark jobs** processing 50TB daily from S3. EMR on EC2 vs EMR Serverless vs EMR on EKS — when to use each? Optimize costs with Spot task nodes, auto-scaling on YARN metrics, write results as Parquet + Delta Lake, monitor with EMR Studio.
+
+📁 **Reference:** `nawab312/AWS` — EMR, Spark, Spot instances sections
+
+#### Key Points to Cover:
+```
+EMR deployment options:
+
+  EMR on EC2:
+  → Traditional: master + core + task nodes
+  → Full control: instance types, custom AMIs, bootstrap actions
+  → Cost: pay for EC2 continuously (even idle between jobs)
+  → Spot: task nodes on Spot (stateless, safe to interrupt)
+  → Use: long-running clusters, custom dependencies, dev
+
+  EMR Serverless:
+  → No cluster management (AWS handles it)
+  → Pay per: vCPU/hour + memory/hour (only during job execution)
+  → Cold start: ~2 min (pre-initialized capacity available)
+  → Use: sporadic jobs, unpredictable workloads, 50TB daily batch
+  → Best cost for: jobs not running 24/7
+
+  EMR on EKS:
+  → Run Spark on existing EKS cluster (Virtual EMR Cluster)
+  → Share EKS compute with other workloads
+  → Use: already have EKS, want unified infrastructure
+  → EMR on EKS uses: Spark Operator internally
+
+For 50TB daily batch → EMR Serverless is optimal:
+  aws emr-serverless create-application \
+    --name daily-etl \
+    --type SPARK \
+    --release-label emr-6.10.0 \
+    --initial-capacity '{
+      "DRIVER": {"workerCount": 1, "workerConfiguration": {"cpu": "4vCPU", "memory": "16GB"}},
+      "EXECUTOR": {"workerCount": 10, "workerConfiguration": {"cpu": "8vCPU", "memory": "32GB"}}
+    }' \
+    --maximum-capacity '{"cpu": "400vCPU", "memory": "1600GB"}'
+
+  # Submit job:
+  aws emr-serverless start-job-run \
+    --application-id app-id \
+    --execution-role-arn arn:aws:iam::123:role/EMRServerlessRole \
+    --job-driver '{
+      "sparkSubmit": {
+        "entryPoint": "s3://my-bucket/scripts/etl.py",
+        "sparkSubmitParameters": "--conf spark.executor.cores=8 --conf spark.executor.memory=30g"
+      }
+    }'
+
+EMR on EC2 with Spot task nodes:
+  # Task nodes: pure compute, no HDFS, safe to interrupt:
+  aws emr add-instance-groups \
+    --cluster-id j-ABC123 \
+    --instance-groups '[{
+      "Name": "Task",
+      "InstanceRole": "TASK",
+      "InstanceType": "m5.4xlarge",
+      "InstanceCount": 20,
+      "BidPrice": "0.60",
+      "Market": "SPOT"
+    }]'
+
+Write results as Delta Lake:
+  from delta.tables import *
+  DeltaTable.createOrReplace(spark) \
+    .tableName("results") \
+    .addColumn("id", "INT") \
+    .addColumn("value", "STRING") \
+    .partitionedBy("year", "month") \
+    .location("s3://my-bucket/results/") \
+    .execute()
+
+  df.write.format("delta") \
+    .mode("append") \
+    .partitionBy("year", "month") \
+    .save("s3://my-bucket/results/")
+
+YARN auto-scaling:
+  # Scale on pending containers (jobs waiting for resources):
+  aws emr put-auto-scaling-policy \
+    --cluster-id j-ABC123 \
+    --instance-group-id ig-TASK \
+    --auto-scaling-policy '{
+      "Rules": [{
+        "Name": "ScaleOutOnPendingContainers",
+        "Action": {"SimpleScalingPolicyConfiguration": {"ScalingAdjustment": 5}},
+        "Trigger": {
+          "CloudWatchAlarmDefinition": {
+            "MetricName": "YARNMemoryAvailablePercentage",
+            "Threshold": 15,
+            "ComparisonOperator": "LESS_THAN_OR_EQUAL"
+          }
+        }
+      }]
+    }'
+```
+
+> 💡 **Interview tip:** For a 50TB daily batch job, **EMR Serverless is almost always the right answer in interviews** — it eliminates cluster management and charges only for actual job execution time. The key insight: a traditional EMR cluster might run 24 hours to process 2 hours of daily jobs (paying for 22 idle hours). EMR Serverless spins up resources for exactly the job duration, then shuts down. Delta Lake vs plain Parquet: Delta adds ACID transactions and time travel (query data as of any historical point) — critical for data pipelines where reprocessing is needed if upstream data was wrong.
+
+---
+
+### Q434 — Linux / Bash | Scenario-Based | Advanced
+
+> Write a **Linux system hardening checker** based on CIS benchmarks — checks SSH config, password policy, filesystem mounts, network settings, audit daemon. Outputs compliance score and generates a remediation script.
+
+📁 **Reference:** `nawab312/DSA` → `Linux` — CIS benchmarks, system hardening sections
+
+#### Key Points to Cover:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCORE=0; TOTAL=0; FAILED_CHECKS=()
+REMEDIATION_SCRIPT="/tmp/remediation-$(date +%Y%m%d).sh"
+echo "#!/usr/bin/env bash" > "$REMEDIATION_SCRIPT"
+echo "# CIS Remediation Script - $(date)" >> "$REMEDIATION_SCRIPT"
+
+check() {
+    local id="$1" desc="$2" result="$3" remediation="$4"
+    TOTAL=$((TOTAL + 1))
+    if [ "$result" = "PASS" ]; then
+        SCORE=$((SCORE + 1))
+        printf "✅ [PASS] %s - %s\n" "$id" "$desc"
+    else
+        FAILED_CHECKS+=("$id: $desc")
+        printf "❌ [FAIL] %s - %s\n" "$id" "$desc"
+        echo "# Fix: $id - $desc" >> "$REMEDIATION_SCRIPT"
+        echo "$remediation" >> "$REMEDIATION_SCRIPT"
+        echo "" >> "$REMEDIATION_SCRIPT"
+    fi
+}
+
+get_sshd_value() { sshd -T 2>/dev/null | grep -i "^$1 " | awk '{print $2}'; }
+get_sysctl() { sysctl -n "$1" 2>/dev/null || echo "not_set"; }
+
+echo "========================================"
+echo "CIS Linux Benchmark Check - $(date)"
+echo "========================================"
+echo ""
+echo "=== SSH CONFIGURATION ==="
+val=$(get_sshd_value PasswordAuthentication)
+check "CIS-5.2.8" "PasswordAuthentication disabled" \
+    "$([[ "$val" == "no" ]] && echo PASS || echo FAIL)" \
+    "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && systemctl restart sshd"
+
+val=$(get_sshd_value PermitRootLogin)
+check "CIS-5.2.9" "PermitRootLogin disabled" \
+    "$([[ "$val" == "no" ]] && echo PASS || echo FAIL)" \
+    "sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && systemctl restart sshd"
+
+val=$(get_sshd_value MaxAuthTries)
+check "CIS-5.2.6" "MaxAuthTries <= 4" \
+    "$([[ -n "$val" && "$val" -le 4 ]] && echo PASS || echo FAIL)" \
+    "sed -i 's/^#*MaxAuthTries.*/MaxAuthTries 4/' /etc/ssh/sshd_config && systemctl restart sshd"
+
+val=$(get_sshd_value Protocol)
+check "CIS-5.2.1" "SSH Protocol 2" \
+    "$([[ "$val" == "2" || -z "$val" ]] && echo PASS || echo FAIL)" \
+    "sed -i 's/^#*Protocol.*/Protocol 2/' /etc/ssh/sshd_config"
+
+echo ""
+echo "=== PASSWORD POLICY ==="
+min_len=$(grep "^PASS_MIN_LEN" /etc/login.defs 2>/dev/null | awk '{print $2}' || echo "0")
+check "CIS-5.4.1.1" "Minimum password length >= 14" \
+    "$([[ "$min_len" -ge 14 ]] && echo PASS || echo FAIL)" \
+    "sed -i 's/^PASS_MIN_LEN.*/PASS_MIN_LEN 14/' /etc/login.defs"
+
+max_days=$(grep "^PASS_MAX_DAYS" /etc/login.defs 2>/dev/null | awk '{print $2}' || echo "99999")
+check "CIS-5.4.1.2" "Password max age <= 365 days" \
+    "$([[ "$max_days" -le 365 ]] && echo PASS || echo FAIL)" \
+    "sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 365/' /etc/login.defs"
+
+echo ""
+echo "=== FILESYSTEM MOUNTS ==="
+tmp_noexec=$(mount | grep " /tmp " | grep -c "noexec" || echo "0")
+check "CIS-1.1.3" "/tmp mounted with noexec" \
+    "$([[ "$tmp_noexec" -ge 1 ]] && echo PASS || echo FAIL)" \
+    "echo 'tmpfs /tmp tmpfs defaults,rw,nosuid,nodev,noexec,relatime 0 0' >> /etc/fstab && mount -o remount /tmp"
+
+echo ""
+echo "=== NETWORK SETTINGS ==="
+ip_forward=$(get_sysctl net.ipv4.ip_forward)
+check "CIS-3.1.1" "IP forwarding disabled" \
+    "$([[ "$ip_forward" == "0" ]] && echo PASS || echo FAIL)" \
+    "echo 'net.ipv4.ip_forward = 0' >> /etc/sysctl.d/99-cis.conf && sysctl -p /etc/sysctl.d/99-cis.conf"
+
+icmp_redirect=$(get_sysctl net.ipv4.conf.all.accept_redirects)
+check "CIS-3.2.2" "ICMP redirects not accepted" \
+    "$([[ "$icmp_redirect" == "0" ]] && echo PASS || echo FAIL)" \
+    "echo 'net.ipv4.conf.all.accept_redirects = 0' >> /etc/sysctl.d/99-cis.conf && sysctl -p /etc/sysctl.d/99-cis.conf"
+
+echo ""
+echo "=== AUDIT DAEMON ==="
+auditd_running=$(systemctl is-active auditd 2>/dev/null || echo "inactive")
+check "CIS-4.1.1" "auditd service running" \
+    "$([[ "$auditd_running" == "active" ]] && echo PASS || echo FAIL)" \
+    "systemctl enable --now auditd"
+
+remote_log=$(grep "^remote_server" /etc/audisp/audisp-remote.conf 2>/dev/null || echo "")
+check "CIS-4.1.2" "Audit logs sent to remote syslog" \
+    "$([[ -n "$remote_log" ]] && echo PASS || echo FAIL)" \
+    "echo 'remote_server = syslog.company.com' >> /etc/audisp/audisp-remote.conf"
+
+echo ""
+echo "========================================"
+PCT=$((SCORE * 100 / TOTAL))
+echo "COMPLIANCE SCORE: $SCORE/$TOTAL ($PCT%)"
+echo ""
+if [ ${#FAILED_CHECKS[@]} -gt 0 ]; then
+    echo "FAILED CHECKS:"
+    for f in "${FAILED_CHECKS[@]}"; do echo "  - $f"; done
+    echo ""
+    echo "Remediation script: $REMEDIATION_SCRIPT"
+    chmod +x "$REMEDIATION_SCRIPT"
+fi
+```
+
+> 💡 **Interview tip:** CIS benchmarks are divided into **Level 1** (basic, low risk to apply) and **Level 2** (more restrictive, may impact functionality). This script covers Level 1 essentials. The **remediation script generation** is what elevates this from a checker to a complete automation tool — the sysadmin can review it, make changes, then run it to fix all failures. In production, integrate this with AWS Config custom rules (call this script via SSM Run Command on all instances) to get continuous compliance visibility across your entire fleet.
+
+---
+
+### Q435 — Kubernetes | Scenario-Based | Advanced
+
+> Implement **Kubernetes cost optimization** using Goldilocks and VPA recommendations to right-size workloads. Walk through installing Goldilocks, interpreting recommendations, automating right-sizing, namespace cost budgets with Kubecost, and per-team chargeback.
+
+📁 **Reference:** `nawab312/Kubernetes` → `06_SCHEDULING_RESOURCE_MANAGEMENT.md`
+
+#### Key Points to Cover:
+```
+Why right-sizing matters:
+  Overprovisioned: wasting money (requests reserved but not used)
+  Underprovisioned: OOMKilled, throttled, bad performance
+  Right-sized: Goldilocks zone → optimal cost + performance
+
+Goldilocks:
+  → Uses VPA in "Off" mode (recommendation only, doesn't auto-apply)
+  → Watches actual CPU/memory usage
+  → Provides: "what should your requests/limits be?"
+  → Dashboard shows: QoS recommendations per container
+
+  Install:
+  helm repo add fairwinds-stable https://charts.fairwinds.com/stable
+  helm install goldilocks fairwinds-stable/goldilocks -n goldilocks
+
+  Enable per namespace:
+  kubectl label namespace production goldilocks.fairwinds.com/enabled=true
+
+  View dashboard:
+  kubectl port-forward svc/goldilocks-dashboard 8080:80 -n goldilocks
+  # Browse http://localhost:8080 → namespace → deployment → recommendations
+
+  Recommendation output per container:
+  QoS Class: Guaranteed (requests=limits) → good for critical services
+  QoS Class: Burstable (requests<limits) → good for variable workloads
+  Requests: cpu=50m, memory=128Mi   ← what VPA recommends based on actual usage
+  Limits:   cpu=200m, memory=512Mi  ← Goldilocks suggests 4x requests as limits
+
+VPA modes:
+  Off:        recommendation only (safe, use with Goldilocks)
+  Initial:    sets resources at pod creation only
+  Auto:       continuously updates (restarts pods) — use carefully
+
+Automate right-sizing:
+  # Script to apply Goldilocks recommendations:
+  kubectl get vpa -n production -o json | \
+    jq -r '.items[] | 
+      .metadata.name as $name |
+      .status.recommendation.containerRecommendations[] |
+      "\($name) \(.containerName) \(.target.cpu) \(.target.memory)"' | \
+  while read deployment container cpu memory; do
+    kubectl set resources deployment/$deployment \
+      -c $container \
+      --requests=cpu=$cpu,memory=$memory \
+      --limits=cpu=$(echo $cpu | awk '{printf "%dm", $1*4}'),memory=$(echo $memory | awk '{printf "%dMi", $1*4}')
+  done
+
+Kubecost for chargeback:
+  helm install kubecost cost-analyzer/cost-analyzer \
+    --namespace kubecost \
+    --set global.prometheus.enabled=false \
+    --set global.prometheus.fqdn=http://prometheus-operated.monitoring:9090
+
+  Cost allocation:
+  → Labels: team=platform, project=payments
+  → Kubecost aggregates cost by label
+  → API: GET /model/allocation?aggregate=label:team&window=30d
+  → Reports: $X per team per month (CPU + memory + storage + network)
+
+  Namespace budget alerts:
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: kubecost-alerts
+  data:
+    alerts.yaml: |
+      alerts:
+      - type: budget
+        threshold: 500        # $500/month
+        window: 30d
+        aggregation: namespace
+        filter: "namespace=payment-service"
+        slackWebhookUrl: https://hooks.slack.com/...
+```
+
+> 💡 **Interview tip:** Goldilocks is often misunderstood — it's not a cost tool, it's a **resource right-sizing tool**. The cost savings come as a side effect of accurate resource requests. Overprovisioned pods (requests: 4 CPU, actual usage: 0.2 CPU) waste node capacity — the scheduler sees the node as 80% full when it's actually 4% utilized. Right-sizing unlocks this wasted capacity, letting you run more workloads on fewer nodes. For interviews: always mention the business impact — "by right-sizing our 200 production deployments with Goldilocks, we reduced node count from 50 to 35, saving $8,000/month in EC2 costs."
+
+---
+
+### Q436 — AWS | Conceptual | Advanced
+
+> Explain **AWS Graviton processors** — performance/cost benefits vs x86. What are the **compatibility considerations** for migrating containerized workloads to Graviton (architecture-specific binaries, multi-arch images)? How do you implement a **gradual EKS migration** using node groups and pod affinity?
+
+📁 **Reference:** `nawab312/AWS` and `nawab312/Kubernetes` — Graviton, ARM64, multi-arch sections
+
+#### Key Points to Cover:
+```
+Graviton generations:
+  Graviton1 (2018): first generation, 16 Arm Neoverse cores
+  Graviton2 (2020): 64-core, 7x performance of Graviton1, 40% better price/perf vs x86
+  Graviton3 (2022): 64-core, 25% better than Graviton2, DDR5 memory
+  Graviton3E (2023): HPC-optimized version
+
+Cost/performance benefits:
+  → 20-40% better price/performance vs comparable x86 (Intel/AMD)
+  → Same instance family: m6g (Graviton2) vs m6i (Intel)
+  → m6g.xlarge: $0.154/hr vs m6i.xlarge: $0.192/hr (20% cheaper)
+  → Energy efficient: lower power = reduced electricity costs (cloud savings passed on)
+
+Compatibility considerations:
+  Architecture: ARM64 (aarch64) vs x86_64 (amd64)
+  Binary compatibility:
+  ✅ Python, Node.js, Java: fully compatible (interpreted/JIT)
+  ✅ Go: cross-compile trivially (GOARCH=arm64)
+  ✅ Rust: cross-compile easily
+  ⚠️  C/C++: must recompile (or use multi-arch build)
+  ❌ x86-only binaries: won't run (SIGILL or exec format error)
+
+Multi-arch Docker images:
+  # Build for both architectures:
+  docker buildx create --use
+  docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    -t 123.dkr.ecr.us-east-1.amazonaws.com/myapp:v1.2.3 \
+    --push .
+
+  # Manifest list: one tag → correct arch pulled per platform
+  docker manifest inspect myapp:v1.2.3
+  # Shows: amd64 and arm64 manifests
+
+  # Verify in CI (GitHub Actions):
+  - uses: docker/build-push-action@v5
+    with:
+      platforms: linux/amd64,linux/arm64
+      push: true
+      tags: ${{ env.ECR_REGISTRY }}/myapp:${{ env.IMAGE_TAG }}
+
+Gradual EKS migration strategy:
+  # Phase 1: Add Graviton node group (don't migrate yet):
+  eksctl create nodegroup \
+    --cluster prod \
+    --name graviton-workers \
+    --instance-types m6g.xlarge,m6g.2xlarge \
+    --nodes 5
+
+  # Phase 2: Test with non-critical workloads:
+  # Add affinity to test deployment:
+  spec:
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+            - key: kubernetes.io/arch
+              operator: In
+              values: [arm64]
+
+  # Phase 3: Migrate services one by one:
+  # After verifying multi-arch image works on Graviton:
+  nodeSelector:
+    kubernetes.io/arch: arm64
+
+  # Phase 4: Taint x86 nodes (force migration):
+  kubectl taint nodes -l kubernetes.io/arch=amd64 \
+    arch=amd64:PreferNoSchedule  # soft: prefer graviton
+  # Then: arch=amd64:NoSchedule (hard: only pods with toleration)
+
+  # Identify incompatible workloads:
+  kubectl get pods -o wide | \
+    awk '{print $7}' | sort -u  # list all nodes running pods
+  # Check: any pods stuck on x86 despite NoSchedule taint?
+  # Those need multi-arch image fix
+```
+
+> 💡 **Interview tip:** The most common Graviton migration mistake: not building multi-arch images before migrating. Teams assume "it's just code, it'll work" — then get `exec format error` when pods fail to start on Graviton nodes. The container image is compiled for a specific CPU architecture, and ARM64 nodes cannot run AMD64 binaries. Always **verify the multi-arch image works on Graviton in a test environment first**, then use the `preferredDuring` affinity (soft preference) before switching to `requiredDuring` (mandatory). This lets you catch compatibility issues before fully committing.
+
+---
+
+### Q437 — Prometheus | Troubleshooting | Advanced
+
+> Your `histogram_quantile()` PromQL queries show **inaccurate p99 latency** — lower than what users experience. Explain **bucket boundary effects, interpolation, and wide buckets**. How do you choose optimal histogram buckets? What are **native histograms** in Prometheus 2.40+?
+
+📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Prometheus` — histogram accuracy sections
+
+#### Key Points to Cover:
+```
+How histogram_quantile works:
+  → Prometheus histograms: count observations that fall into each bucket
+  → histogram_quantile(0.99, ...) = linear interpolation within a bucket
+  → Assumption: values are UNIFORMLY distributed within a bucket
+  → If assumption is wrong → inaccurate result
+
+Bucket boundary effect (error source 1):
+  Buckets: 0.1, 0.25, 0.5, 1.0, 2.5, 5.0
+  If 99% of requests complete in 0.45-0.55 seconds:
+  → All fall in 0.25-0.5 bucket
+  → histogram_quantile interpolates: estimates p99 ≈ 0.5 (top of bucket)
+  → But actual p99 might be 0.48 (near the bottom)
+  → Error: up to 100% of bucket width
+
+Wide buckets (error source 2):
+  If latency bucket is 0-10s (huge bucket):
+  → histogram_quantile might report p99=9.9s
+  → But actual p99 is 0.3s (all requests complete quickly)
+  → Because most requests ARE in this wide bucket, interpolation is off
+
+Choosing optimal buckets:
+  Rule: buckets should be where your p50-p99 actually falls
+  → If typical latency is 10-500ms: buckets at 10, 25, 50, 100, 250, 500ms
+  → Not: default buckets of 5ms to 10s
+
+  # prom-client Node.js:
+  const histogram = new Histogram({
+    name: 'http_request_duration_seconds',
+    buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5]
+    # Buckets cover: 5ms to 2.5s — typical web request range
+  })
+
+  # Rule of thumb:
+  # Upper bound of highest bucket > p99.9 of your workload
+  # Bucket boundaries near expected SLO values
+  # 7-12 buckets is usually enough (more = more storage/computation)
+
+Identifying bucket issues:
+  # Check: if all observations fall in last bucket = buckets too narrow
+  http_request_duration_seconds_bucket{le="10"}   # = total count?
+  # If yes: most requests > all bucket boundaries → inaccurate
+
+  # Check bucket resolution:
+  http_request_duration_seconds_bucket{le="0.5"} -
+  http_request_duration_seconds_bucket{le="0.25"}
+  # If this is a large fraction of total → bucket needs splitting
+
+Native Histograms (Prometheus 2.40+):
+  Problem: pre-defined buckets = static, require knowledge of distribution upfront
+  Native histograms: Prometheus automatically manages buckets
+
+  Feature:
+  → Exponential bucketing scheme (automatic)
+  → High resolution by default (error < 1%)
+  → No pre-configuration needed
+  → Much better accuracy for unknown distributions
+
+  Enable:
+  --enable-feature=native-histograms   # in Prometheus server
+  --enable-feature=exemplar-storage    # for exemplar support
+
+  In app (prom-client):
+  const histogram = new Histogram({
+    name: 'http_request_duration_seconds',
+    enableExemplars: true,
+    // No buckets[] needed for native histograms
+  })
+
+  Query (same API):
+  histogram_quantile(0.99,
+    sum by(le) (rate(http_request_duration_seconds[5m]))
+  )
+```
+
+> 💡 **Interview tip:** The most actionable interview answer: "the root cause of histogram inaccuracy is almost always **bucket boundaries not matching your actual latency distribution**." The quick diagnostic: check if `histogram_quantile(1.0, ...)` returns the upper bound of your highest bucket — if yes, you have requests above all bucket boundaries and your histogram is saturated (wildly inaccurate). Fix: raise the upper bound bucket. For new services where you don't know the latency distribution, use **native histograms** (Prometheus 2.40+) which automatically create optimal buckets — no configuration needed, and error is always < 1%.
+
+---
+
+### Q438 — Kubernetes | Conceptual | Advanced
+
+> Explain **Kubernetes OpenTelemetry Operator** and its **auto-instrumentation** capability. How does the operator inject instrumentation without code changes using init containers and env vars? Which languages are supported? Write the `Instrumentation` CR for a Java app.
+
+📁 **Reference:** `nawab312/Kubernetes` → `08_OBSERVABILITY.md`
+
+#### Key Points to Cover:
+```
+What OTel Operator provides:
+  Beyond just deploying the Collector:
+  → Manages: OpenTelemetry Collector (as CRD)
+  → Auto-instrumentation: inject OTel SDK into pods without code changes
+  → Upgrades: manages Collector and instrumentation library versions
+
+Auto-instrumentation mechanism:
+  1. Annotation on pod/namespace: instrumentation.opentelemetry.io/inject-java: "true"
+  2. Operator's MutatingAdmissionWebhook intercepts pod creation
+  3. Operator injects: init container that copies OTel agent JAR to emptyDir
+  4. Operator adds: environment variables for the agent
+  5. Main container: JVM picks up agent via JAVA_TOOL_OPTIONS
+
+  What gets injected (Java example):
+  initContainers:
+  - name: opentelemetry-auto-instrumentation
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:1.32.0
+    command: [cp, /javaagent.jar, /otel-auto-instrumentation/javaagent.jar]
+    volumeMounts:
+    - mountPath: /otel-auto-instrumentation
+      name: opentelemetry-auto-instrumentation-java
+
+  env vars added to main container:
+    JAVA_TOOL_OPTIONS: -javaagent:/otel-auto-instrumentation/javaagent.jar
+    OTEL_SERVICE_NAME: payment-service
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    OTEL_PROPAGATORS: tracecontext,baggage,b3
+
+Supported languages:
+  Java:     opentelemetry-javaagent.jar (most mature)
+  Python:   sitecustomize.py injection
+  Node.js:  NODE_OPTIONS=--require @opentelemetry/auto-instrumentations-node
+  .NET:     CORECLR_ENABLE_PROFILING=1 + CLR profiler
+  Go:       eBPF-based (no code changes, experimental)
+  PHP:      via extension
+
+Instrumentation CR (Java):
+  apiVersion: opentelemetry.io/v1alpha1
+  kind: Instrumentation
+  metadata:
+    name: java-instrumentation
+    namespace: production
+  spec:
+    # Where to send traces:
+    exporter:
+      endpoint: http://otel-collector.monitoring.svc:4317
+
+    # Propagation format:
+    propagators:
+    - tracecontext
+    - baggage
+    - b3multi
+
+    # Sampling (reduce trace volume):
+    sampler:
+      type: parentbased_traceidratio
+      argument: "0.1"    # sample 10% of traces
+
+    # Java-specific agent config:
+    java:
+      image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:1.32.0
+      env:
+      - name: OTEL_INSTRUMENTATION_JDBC_ENABLED
+        value: "true"
+      - name: OTEL_INSTRUMENTATION_SPRING_WEB_ENABLED
+        value: "true"
+
+  # Enable per-pod (annotation):
+  metadata:
+    annotations:
+      instrumentation.opentelemetry.io/inject-java: "true"
+      # OR inject-python, inject-nodejs, inject-dotnet
+
+  # Enable per-namespace (all pods get instrumented):
+  kubectl annotate namespace production \
+    instrumentation.opentelemetry.io/inject-java=true
+```
+
+> 💡 **Interview tip:** Auto-instrumentation is the **"observability in a day" story** — annotate namespaces, and every Java/Python/Node.js service starts emitting traces, metrics, and eventually logs without a single code change. The init container copies the agent JAR, and the JVM picks it up via `JAVA_TOOL_OPTIONS` — this works for ANY JVM-based application regardless of framework. The limitation: auto-instrumentation captures framework-level traces (HTTP, JDBC, gRPC) but NOT custom business spans. For business logic tracing ("processing order ID X"), developers still need a few lines of manual instrumentation.
+
+---
+
+### Q439 — AWS | Scenario-Based | Advanced
+
+> Design a complete **AWS FinOps implementation** — tagging strategy enforced via SCPs and Config rules, cost allocation to teams, budget alerts with Slack notifications, rightsizing via Compute Optimizer, waste detection (unattached EBS/idle RDS/unused EIPs), weekly chargeback reports.
+
+📁 **Reference:** `nawab312/AWS` — FinOps, Cost Explorer, Compute Optimizer sections
+
+#### Key Points to Cover:
+```
+Tagging strategy (foundation):
+  Required tags (enforced):
+  - team:         which team owns this resource
+  - environment:  production/staging/dev
+  - project:      which project/initiative
+  - cost-center:  finance billing code
+
+  Enforce via SCP (deny resource creation without tags):
+  {
+    "Effect": "Deny",
+    "Action": ["ec2:RunInstances", "rds:CreateDBInstance", "eks:CreateCluster"],
+    "Resource": "*",
+    "Condition": {
+      "Null": {
+        "aws:RequestTag/team": "true"
+      }
+    }
+  }
+
+  Enforce via Config rule (detect untagged existing resources):
+  aws configservice put-config-rule \
+    --config-rule '{
+      "Source": {"Owner": "AWS", "SourceIdentifier": "REQUIRED_TAGS"},
+      "InputParameters": "{\"tag1Key\":\"team\",\"tag2Key\":\"environment\"}"
+    }'
+
+Cost allocation:
+  Cost Explorer → tag-based groups:
+  aws ce create-cost-category-definition \
+    --name TeamAllocation \
+    --rules '[{
+      "Value": "platform",
+      "Rule": {"Tags": {"Key": "team", "Values": ["platform"]}}
+    }]'
+
+Budget alerts per team:
+  aws budgets create-budget \
+    --account-id 123456789012 \
+    --budget '{
+      "BudgetName": "platform-team-monthly",
+      "BudgetLimit": {"Amount": "5000", "Unit": "USD"},
+      "BudgetType": "COST",
+      "TimeUnit": "MONTHLY",
+      "CostFilters": {"TagKeyValue": ["team$platform"]}
+    }' \
+    --notifications-with-subscribers '[{
+      "Notification": {
+        "NotificationType": "ACTUAL",
+        "ComparisonOperator": "GREATER_THAN",
+        "Threshold": 80
+      },
+      "Subscribers": [{
+        "SubscriptionType": "SNS",
+        "Address": "arn:aws:sns:us-east-1:123:cost-alerts"
+      }]
+    }]'
+
+  # SNS → Lambda → Slack webhook:
+  import json, urllib.request
+  def handler(event, context):
+      msg = json.loads(event['Records'][0]['Sns']['Message'])
+      slack_msg = {
+          "text": f"⚠️ Budget alert: {msg['budgetName']} is at {msg['threshold']}% of ${msg['budgetLimit']}"
+      }
+      req = urllib.request.Request(SLACK_WEBHOOK_URL,
+          data=json.dumps(slack_msg).encode(), method='POST')
+      urllib.request.urlopen(req)
+
+Waste detection (Lambda scheduled weekly):
+  # Unattached EBS volumes:
+  ec2.describe_volumes(Filters=[{'Name': 'status', 'Values': ['available']}])
+
+  # Unused Elastic IPs:
+  ec2.describe_addresses(Filters=[{'Name': 'domain', 'Values': ['vpc']}])
+  # Filter: 'InstanceId' not in address → unattached
+
+  # Idle RDS instances (< 1% CPU for 7 days):
+  cloudwatch.get_metric_statistics(
+      Namespace='AWS/RDS', MetricName='CPUUtilization',
+      Statistics=['Average'], Period=86400, StartTime=7_days_ago
+  )
+  # If all averages < 1% → idle instance → candidate for termination
+
+  # Zombie EKS node groups (nodes with 0 pods for 24h):
+  # kubectl top nodes + filter
+
+Compute Optimizer auto-rightsizing:
+  # Get recommendations:
+  optimizer.get_ec2_instance_recommendations()
+  # Result: "i-abc123: change from m5.xlarge to m5.large (50% cost reduction, same performance)"
+
+  # Automate with SSM Maintenance Window:
+  # During off-hours → stop instance → change type → start instance
+
+Weekly chargeback report (Lambda + SES):
+  # Fetch Cost Explorer data for last 7 days by team tag:
+  cost_by_team = ce.get_cost_and_usage(
+      TimePeriod={'Start': week_ago, 'End': today},
+      Granularity='WEEKLY',
+      GroupBy=[{'Type': 'TAG', 'Key': 'team'}]
+  )
+  # Format as CSV → email to team leads via SES
+```
+
+> 💡 **Interview tip:** FinOps implementation lives or dies on **tagging compliance**. Even the best cost allocation tools are useless if 40% of resources are untagged. The SCP-based enforcement is the only reliable approach — it makes tagging impossible to skip at resource creation time. But SCPs can't retroactively tag existing resources. For those: Config rule + auto-remediation Lambda that tags resources based on their account or by sending Slack DMs to resource owners. The most impactful quick win: unattached EBS volumes and unused Elastic IPs are pure waste with zero business value — automating their detection and deletion typically saves 5-15% of monthly AWS spend immediately.
+
+---
+
+### Q440 — Linux / Bash | Conceptual | Advanced
+
+> Explain **`strace`** in depth — what does it trace, when to use it vs `ltrace` vs `perf trace`? Give 5 real-world scenarios where strace reveals the root cause, with exact commands for each.
+
+📁 **Reference:** `nawab312/DSA` → `Linux` — strace, syscall tracing sections
+
+#### Key Points to Cover:
+```
+What strace traces:
+  → Every system call (syscall) made by a process
+  → Arguments to each syscall and return values
+  → Signals sent to/from process
+  → Child processes (with -f flag)
+
+strace vs ltrace vs perf trace:
+  strace:       kernel syscalls — what the process asks the OS to do
+                Overhead: 10-100x slowdown (intercepts every syscall via ptrace)
+  ltrace:       library calls — what functions in .so libraries are called
+                Shows: malloc(), fopen(), printf() from glibc
+  perf trace:   syscalls via eBPF — like strace but 10x less overhead
+                Use: production tracing where strace is too slow
+
+5 Real-world scenarios:
+
+  1. Application failing silently with no logs:
+     # What system calls fail right before exit?
+     strace -e trace=all -f ./app 2>&1 | grep -E "E[A-Z]+|= -1"
+     # Look for: ENOENT (file not found), EACCES (permission denied)
+     # You'll see: open("/etc/app.conf", O_RDONLY) = -1 ENOENT
+
+  2. Permission denied with no obvious cause:
+     # Exactly which file/socket is denied?
+     strace -e trace=open,openat,connect ./app 2>&1 | grep EACCES
+     # Output: openat(AT_FDCWD, "/var/run/app.sock", O_RDWR) = -1 EACCES
+     # Now you know: it's /var/run/app.sock, fix permissions on that socket
+
+  3. Application hanging with no CPU usage:
+     # What syscall is the process blocked on?
+     strace -p <PID>   # attach to running process
+     # Output: futex(0x7f..., FUTEX_WAIT_PRIVATE, 1, NULL
+     # Hanging on futex = waiting for a mutex → deadlock or slow lock holder
+
+  4. Unexpectedly slow file operations:
+     # What file operations and how long do they take?
+     strace -T -e trace=read,write,fsync -p <PID>
+     # -T shows time spent in each syscall
+     # Output: read(5, ..., 4096) = 4096 <0.125>
+     # 125ms per read → slow disk or network filesystem (NFS)
+
+  5. Network connection failures:
+     # Which address is the app trying to connect to?
+     strace -e trace=connect,socket ./app 2>&1
+     # connect(3, {sa_family=AF_INET, sin_port=htons(5432),
+     #             sin_addr=inet_addr("10.0.0.100")}, 16) = -1 ECONNREFUSED
+     # Now you know: trying to connect to 10.0.0.100:5432 (PostgreSQL?) and it's refused
+
+Key strace flags:
+  -p <PID>:     attach to running process
+  -f:           follow fork (trace child processes too)
+  -e trace=X:  filter to specific syscall category (network, file, process)
+  -T:           show time spent in each syscall
+  -tt:          timestamps per line
+  -o file.txt:  write output to file (avoid terminal flood)
+  -c:           count/summarize (most called syscalls, total time)
+
+strace summary mode (find hottest syscalls):
+  strace -c ./app
+  # % time   seconds  usecs/call  calls  syscall
+  # 45.00    0.045000      45     1000  read
+  # 30.00    0.030000      30     1000  write
+  # 15.00    0.015000    1500       10  fsync   ← 1500 microsec/call = slow
+```
+
+> 💡 **Interview tip:** The interview signal that separates experts: knowing **when NOT to use strace**. In production on a high-traffic service, attaching strace can crash the application or cause severe performance degradation because ptrace intercepts every syscall. For production: use `perf trace` (eBPF-based, < 5% overhead) or `bpftrace`. Reserve strace for: development, staging, or short diagnostic sessions with low-traffic processes. Also: `strace -c ./app` (count mode, not trace mode) runs the whole application and just shows a summary at the end — much lower overhead for "what syscalls is this app spending time on?" questions.
+
+---
+
+### Q441 — Kubernetes | Scenario-Based | Advanced
+
+> Implement **NetworkPolicy enforcement with audit logging** — run policies in audit mode first, generate traffic baseline, gradually enable enforcement, correlate audit logs with workloads. Walk through Calico or Cilium audit mode.
+
+📁 **Reference:** `nawab312/Kubernetes` → `03_NETWORKING.md`, `07_SECURITY.md`
+
+#### Key Points to Cover:
+```
+Problem: Enforcing NetworkPolicy without visibility = risk
+  → Apply default-deny → some service stops working → scramble to find which
+  → Solution: audit mode first → see what would be blocked → fix → enforce
+
+Calico audit mode:
+  Calico GlobalNetworkPolicy with audit action:
+  apiVersion: projectcalico.org/v3
+  kind: GlobalNetworkPolicy
+  metadata:
+    name: default-deny-audit
+  spec:
+    selector: all()
+    types: [Ingress, Egress]
+    ingress:
+    - action: Log          # LOG but don't block
+    egress:
+    - action: Log          # LOG but don't block
+  # Calico logs all connections to: /var/log/calico/
+
+  # View denied flows:
+  kubectl logs -n kube-system -l k8s-app=calico-node | grep "Log"
+  # Output: {"srcIP":"10.0.1.5","dstIP":"10.0.2.10","dstPort":5432,"action":"Log"}
+
+Cilium audit mode (policy audit mode):
+  # Enable for a specific namespace:
+  kubectl annotate namespace production \
+    "policy.cilium.io/audit-mode=enabled"
+
+  # OR in CiliumNetworkPolicy:
+  apiVersion: cilium.io/v2
+  kind: CiliumNetworkPolicy
+  metadata:
+    name: audit-all
+  spec:
+    endpointSelector: {}
+    ingress:
+    - {}    # allow all in audit mode
+
+  # View Hubble (Cilium's observability):
+  hubble observe --namespace production --type drop
+  # Shows: flows that WOULD be dropped if enforcement enabled
+
+Workflow (4 phases):
+
+  Phase 1 — Baseline (2 weeks):
+  → Deploy audit policy (log only, no enforcement)
+  → Collect all flows: source → destination → port
+  → Build traffic matrix: which services talk to which
+
+  Phase 2 — Generate policies from observed traffic:
+  # Network Policy Generator (Cilium):
+  hubble observe --namespace production -o json | \
+    python3 generate-policies.py > generated-policies.yaml
+
+  # Or use: np-guard / network-policy-generator tools
+  kubectl apply -f generated-policies.yaml
+  # Still in audit mode → verify generated policies capture all traffic
+
+  Phase 3 — Gradual enforcement (namespace by namespace):
+  # Start with least critical namespace:
+  kubectl annotate namespace dev \
+    "policy.cilium.io/audit-mode=disabled"   # enforce dev first
+  # Monitor: any app failures? Fix policies before moving to prod
+
+  Phase 4 — Production enforcement:
+  kubectl annotate namespace production \
+    "policy.cilium.io/audit-mode=disabled"
+
+Correlating audit logs to workloads:
+  # Cilium flow log includes labels:
+  {"srcLabels": {"app": "frontend", "team": "checkout"},
+   "dstLabels": {"app": "database"},
+   "dstPort": 5432,
+   "verdict": "DROPPED"}
+
+  # Find which team's pod was denied:
+  hubble observe --namespace production \
+    --verdict DROPPED \
+    -o json | \
+    jq '.source.labels["k8s:app"] + " → " + .destination.labels["k8s:app"]' | \
+    sort | uniq -c | sort -rn
+```
+
+> 💡 **Interview tip:** **Never apply default-deny NetworkPolicy without audit mode first.** This is the #1 cause of self-inflicted Kubernetes outages — teams apply `deny-all` in production and suddenly services that have never had NetworkPolicy start failing in unexpected ways (monitoring, service mesh control plane, DNS). Cilium's audit mode with Hubble makes the safe path easy: observe for 2 weeks, auto-generate policies from observed traffic, verify in audit mode, then enforce. The policy generation step is the magic — instead of manually writing NetworkPolicy for 50 services, let Hubble observe what actually happens and generate the allow rules for you.
+
+---
+
+### Q442 — AWS | Conceptual | Advanced
+
+> Explain **AWS DataSync vs Transfer Family vs Storage Gateway**. When to use each? Design solutions for: daily 10TB NFS sync to S3, SFTP access for partners to upload to S3, on-premises NFS mount backed by S3.
+
+📁 **Reference:** `nawab312/AWS` — DataSync, Transfer Family, Storage Gateway sections
+
+#### Key Points to Cover:
+```
+AWS DataSync — Automated data transfer service:
+  → Moves data between: on-premises NAS/NFS/SMB ↔ S3/EFS/FSx
+  → Agent-based: install DataSync agent on-premises
+  → Protocol: optimized transfer (5x faster than rsync)
+  → Features: scheduling, filtering, verification, encryption
+  → Cost: $0.0125 per GB transferred
+
+  Use cases: ✅ Scheduled migrations, one-time large transfers, ongoing sync
+  NOT for: ✅ user-facing file access, low-latency access
+
+  Solution A (10TB NFS → S3 daily):
+  # 1. Install DataSync agent on-prem (EC2-like VM or container)
+  # 2. Create source location (NFS):
+  aws datasync create-location-nfs \
+    --server-hostname 192.168.1.100 \
+    --subdirectory /exports/data \
+    --on-prem-config '{"AgentArns": ["arn:aws:datasync:..."]}' \
+    --mount-options '{"Version": "NFS4_1"}'
+
+  # 3. Create destination location (S3):
+  aws datasync create-location-s3 \
+    --s3-bucket-arn arn:aws:s3:::my-bucket \
+    --s3-config '{"BucketAccessRoleArn": "arn:aws:iam::123:role/DataSyncS3"}'
+
+  # 4. Create task with schedule:
+  aws datasync create-task \
+    --source-location-arn arn:source \
+    --destination-location-arn arn:dest \
+    --schedule '{"ScheduleExpression": "cron(0 2 * * ? *)"}'  # 2am daily
+    --options '{"VerifyMode": "ONLY_FILES_TRANSFERRED"}'
+
+AWS Transfer Family — Managed file transfer service:
+  → Provides: SFTP, FTPS, FTP endpoints backed by S3 or EFS
+  → Users authenticate: SSH keys, password (AD/IdP integration)
+  → Files land in: S3 bucket or EFS
+  → Custom domain: sftp.company.com
+  → Cost: $0.30/hour per protocol + $0.04/GB transferred
+
+  Use cases: ✅ Partner file exchange, B2B file transfer, legacy SFTP workflows
+  NOT for: real-time processing, low-latency access
+
+  Solution B (SFTP for partners):
+  aws transfer create-server \
+    --protocols SFTP \
+    --identity-provider-type SERVICE_MANAGED \
+    --endpoint-type PUBLIC
+
+  aws transfer create-user \
+    --server-id s-abc123 \
+    --user-name partner-acme \
+    --home-directory /my-bucket/partners/acme/ \
+    --role arn:aws:iam::123:role/TransferUser \
+    --ssh-public-keys '["ssh-rsa AAAA..."]'
+
+AWS Storage Gateway — Hybrid cloud storage:
+  → Bridge between on-premises and AWS cloud storage
+  → Runs as: VM (VMware/Hyper-V), hardware appliance, or EC2
+  → Types: File Gateway (NFS/SMB → S3), Volume Gateway (iSCSI → EBS), Tape Gateway
+
+  Solution C (on-prem NFS mount backed by S3):
+  # File Gateway type:
+  → On-prem applications mount NFS/SMB share normally
+  → File Gateway: caches recently accessed files locally (low latency)
+  → Asynchronously uploads to S3 in background
+  → S3 = primary storage, gateway = local cache
+
+  # Deploy File Gateway:
+  aws storagegateway create-gateway \
+    --gateway-name my-file-gateway \
+    --gateway-type FILE_S3 \
+    --gateway-timezone America/New_York
+
+  # Create NFS file share (backed by S3 bucket):
+  aws storagegateway create-nfs-file-share \
+    --gateway-arn arn:aws:storagegateway:... \
+    --location-arn arn:aws:s3:::my-bucket \
+    --role arn:aws:iam::123:role/StorageGatewayRole \
+    --nfs-file-share-defaults '{"FileMode":"0644","DirectoryMode":"0755"}'
+
+  # On-premises: mount NFS as normal:
+  mount -t nfs -o nolock gateway-ip:/my-bucket /mnt/data
+
+Decision matrix:
+  Transfer large batch of data on schedule → DataSync
+  Partners/users need SFTP access → Transfer Family
+  Apps need NFS/SMB to read/write S3 → Storage Gateway
+  One-time migration → DataSync
+  Ongoing sync of small changes → DataSync
+  Legacy apps can't change (use NFS) → Storage Gateway
+```
+
+> 💡 **Interview tip:** The key confusion to address: **DataSync is for machine-to-machine data movement**, Transfer Family is **for human users uploading files via SFTP/FTP**. Storage Gateway is for **on-premises applications that need transparent access to S3 via standard protocols**. The interview trap: "how would you migrate 10TB from on-prem NFS to S3?" — DataSync (not Storage Gateway, which is for ongoing access, not migration). Storage Gateway's local cache is the key feature — on-prem apps get NFS performance from cache, while the actual data lives durably in S3.
+
+---
+
+### Q443 — ArgoCD | Troubleshooting | Advanced
+
+> ArgoCD shows **`OutOfSync`** but the diff shows only **ordering differences** in environment variables. Why does ArgoCD consider ordering drift? How do you configure ArgoCD to **ignore ordering** for specific fields? Write the `resource.customizations` ConfigMap config.
+
+📁 **Reference:** `nawab312/CI_CD` → `ArgoCD` — resource customizations, ignoreDifferences sections
+
+#### Key Points to Cover:
+```
+Why ordering causes OutOfSync:
+  → ArgoCD diffs Git manifest vs live Kubernetes object
+  → Diff algorithm: compares JSON structure (strict equality)
+  → Kubernetes may store/return items in different order than Git
+  → Result: values are same but ORDER is different → diff detected
+
+Common ordering drift sources:
+  1. Environment variables: Kubernetes sorts envs alphabetically sometimes
+  2. Container ordering in pod spec
+  3. Labels/annotations (maps → order undefined)
+  4. Volume mounts list reordered by controller
+  5. InitContainers after injection by mutating webhook
+
+Solutions:
+
+  Option 1 — ignoreDifferences per Application:
+  apiVersion: argoproj.io/v1alpha1
+  kind: Application
+  spec:
+    ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+      - /spec/template/spec/containers/0/env  # ignore env var list
+      - /spec/template/spec/initContainers     # ignore initContainer ordering
+
+  Option 2 — jqPathExpressions (more powerful):
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jqPathExpressions:
+    - .spec.template.spec.containers[].env    # ALL containers' envs
+    - .spec.template.spec.initContainers
+
+  Option 3 — resource.customizations in ArgoCD ConfigMap (cluster-wide):
+  kubectl edit configmap argocd-cm -n argocd
+
+  data:
+    resource.customizations: |
+      apps/Deployment:
+        ignoreDifferences: |
+          jqPathExpressions:
+          - .spec.template.spec.containers[].env
+          - .spec.template.spec.initContainers
+      /ConfigMap:
+        ignoreDifferences: |
+          jsonPointers:
+          - /data
+
+  Option 4 — respecting order in Git (prevent drift):
+  # Ensure your Helm chart or manifests match the server-stored ordering
+  # Use: kubectl get deployment -o json → see what ordering K8s uses → match in Git
+
+  # For env vars: sort alphabetically in your Helm values/template
+  # This prevents the diff from occurring at all
+
+Using `argocd.argoproj.io/compare-options` annotation:
+  metadata:
+    annotations:
+      argocd.argoproj.io/compare-options: IgnoreExtraneous
+      # Also useful: ServerSideDiff=true (use K8s strategic merge for diff)
+
+Server-side diff (ArgoCD 2.8+):
+  # Use K8s server-side apply for diffing (more accurate):
+  argocd app set myapp --server-side-diff=true
+  # Eliminates most ordering false positives
+```
+
+> 💡 **Interview tip:** The **jqPathExpressions approach is more powerful** than `jsonPointers` for ignoring ordering. `jsonPointers` ignores the exact path (literal array index). `jqPathExpressions` can use wildcards (`.spec.template.spec.containers[].env` = ALL containers). The most production-relevant issue: **mutating webhooks** (Istio sidecar injection, Vault agent injection) add containers to pod specs. ArgoCD sees the injected init container in the live spec but not in the Git manifest → perpetual OutOfSync. Fix: add the injection container path to `ignoreDifferences`. The cleaner long-term fix in ArgoCD 2.8+: enable **server-side diff** which uses Kubernetes's own diffing (strategic merge patch) and correctly ignores server-side additions.
+
+---
+
+### Q444 — Grafana | Conceptual | Advanced
+
+> Explain **Grafana Unified Alerting** evaluation engine in depth. How does Grafana evaluate alert rules differently from Prometheus? What is **`NoData`** and **`Error`** state handling? What is **`Keep Last State`** and when is it appropriate vs dangerous?
+
+📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Grafana` — unified alerting sections
+
+#### Key Points to Cover:
+```
+Grafana Unified Alerting vs Prometheus Alerting:
+  Prometheus:
+  → Alerting rules run in Prometheus (alongside queries)
+  → Alerts sent to Alertmanager for routing/dedup
+  → Data source: only Prometheus
+  → Limitations: only Prometheus metrics
+
+  Grafana Unified Alerting (2.x+):
+  → Alert rules can use ANY Grafana data source (Prometheus, Loki, MySQL, Elasticsearch)
+  → Built-in notification routing (replaces some Alertmanager functions)
+  → Multi-dimensional alerts (one rule → multiple alert instances)
+  → Still can use Alertmanager for routing (Grafana → Alertmanager)
+
+Evaluation engine:
+  Evaluation group:
+  → Set of alert rules evaluated together
+  → Single interval (e.g., every 1m)
+  → Rules in same group evaluated sequentially
+
+  Alert states:
+  Normal:  condition not met (no alert)
+  Pending: condition met but not for full `for` duration
+  Firing:  condition met for entire `for` duration
+  NoData:  query returned no data (key!)
+  Error:   query failed (data source unreachable, query syntax error)
+
+NoData state handling (important):
+  Scenario: application restarts → no metrics for 2 minutes → query returns null
+  Question: should Grafana fire an alert because there's no data?
+
+  Options for NoData:
+  NoData:       alert transitions to NoData state (send notification?)
+  Alerting:     treat NoData as an alert firing (aggressive)
+  OK:           treat NoData as healthy (risky — hides real outages)
+  Keep Last State: use the last known state (controversial)
+
+  Configuration:
+  In alert rule:
+  → If no data or all values are null: [NoData / Alerting / OK / Keep Last State]
+  → If execution error or timeout: [Alerting / OK / Error / Keep Last State]
+
+Keep Last State — when appropriate vs dangerous:
+  Appropriate:
+  → Metric is collected infrequently (every 5m) and evaluation is every 1m
+  → Between scrapes, data is absent — but that's normal and expected
+  → You don't want "no data" pages during normal scrape gaps
+  → Maintenance window: metric temporarily unavailable
+
+  Dangerous:
+  → When absence of data IS the alert condition (e.g., heartbeat monitor)
+  → If data source goes down → Keep Last State hides the outage
+  → Alert was "OK" before outage → stays "OK" during outage
+  → You miss: "application stopped sending metrics" (often the first sign of outage)
+
+  Rule: Use "Alerting" for NoData on: availability metrics, heartbeat checks
+        Use "Keep Last State" for: infrequently updated metrics, known gaps
+
+  Best practice pattern:
+  → Separate alert for "metric exists" (absence = alert):
+    absent(up{job="myapp"}) == 1
+    # Fires if scrape target disappears entirely
+  → Then use Keep Last State for the actual value-based alert
+```
+
+> 💡 **Interview tip:** The `NoData` state is the most misunderstood Grafana alerting concept. The failure mode with `Keep Last State`: your application crashes at midnight, stops sending metrics, the alert was "OK" at 11:59pm → `Keep Last State` keeps it "OK" all night → on-call is never paged → customers notice at 8am. The fix: **always have a separate `absent()` alert** for critical metrics. `absent(http_requests_total)` fires when the metric disappears entirely — this catches the "app stopped reporting" scenario that `Keep Last State` hides. The value-based alert then uses `Keep Last State` safely for short gaps.
+
+---
+
+### Q445 — Kubernetes | Troubleshooting | Advanced
+
+> Your **kubelet itself is OOMKilled** repeatedly on several nodes, causing all Pods to be evicted and the node to become NotReady. What causes kubelet OOM? What are **`kubeReserved`** and **`systemReserved`** settings and why are they critical? How do you properly size these reservations?
+
+📁 **Reference:** `nawab312/Kubernetes` → `06_SCHEDULING_RESOURCE_MANAGEMENT.md`, `09_CLUSTER_OPERATIONS.md`
+
+#### Key Points to Cover:
+```
+Why kubelet can OOM:
+  → By default, the scheduler uses ALL node memory for pod scheduling
+  → Pods scheduled to use 100% of node memory → no memory left for kubelet
+  → kubelet itself needs memory to: watch pod states, report to API server, manage containers
+  → OOM killer kills kubelet (just another process) → node becomes NotReady
+
+Node memory breakdown:
+  Total Node RAM: 8GB
+  - Operating System:    ~500MB (kernel, OS processes)
+  - Kubelet + kube-proxy: ~300MB
+  - Container runtime:   ~200MB
+  - Pods:                 7GB (all available to scheduler)
+  PROBLEM: pods can use 7GB but OS+kubelet+runtime ALSO need memory
+  If pods use 7GB: 1GB left → OS+kubelet starved → OOM
+
+kubeReserved and systemReserved:
+  systemReserved:
+  → Memory/CPU reserved for OS processes (not related to Kubernetes)
+  → Kernel, daemons, sshd, etc.
+  → Typical: 512Mi memory, 250m CPU
+
+  kubeReserved:
+  → Memory/CPU reserved for Kubernetes components on the node
+  → kubelet, kube-proxy, container runtime (containerd/docker)
+  → Typical: 512Mi memory, 250m CPU
+
+  Allocatable formula:
+  Allocatable = Total - kubeReserved - systemReserved - evictionThreshold
+
+Configure in kubelet (EKS node user data):
+  # /etc/kubernetes/kubelet/kubelet-config.json:
+  {
+    "kubeReserved": {
+      "cpu": "250m",
+      "memory": "512Mi",
+      "ephemeral-storage": "1Gi"
+    },
+    "systemReserved": {
+      "cpu": "250m",
+      "memory": "512Mi",
+      "ephemeral-storage": "1Gi"
+    },
+    "evictionHard": {
+      "memory.available": "200Mi",   # evict pods when only 200Mi left
+      "nodefs.available": "10%"
+    },
+    "enforceNodeAllocatable": ["pods", "kube-reserved", "system-reserved"]
+  }
+
+  # enforceNodeAllocatable: uses cgroups to ENFORCE reservations
+  # Without enforcement: reservations are just hints to scheduler
+
+  # With enforcement:
+  # kubeReserved → kubelet gets its own cgroup with guaranteed 512Mi
+  # Pods can't steal from kubelet even under extreme memory pressure
+
+EKS default reservations (node bootstrap auto-calculates):
+  # EKS uses: eks-bootstrap.sh which sets kubeReserved based on node size
+  # For m5.xlarge (16GB):
+  # kubeReserved: cpu=100m, memory=1382Mi
+  # systemReserved: cpu=100m, memory=100Mi
+
+Sizing guidelines:
+  kubeReserved memory:
+  → Small nodes (< 4GB): 512Mi
+  → Medium nodes (4-16GB): 1Gi
+  → Large nodes (16-64GB): 2Gi
+  → Very large (>64GB): 3Gi (kubelet memory grows with pod count)
+
+  Monitor:
+  node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes
+  → Actual node memory usage
+  container_memory_working_set_bytes{pod="",container=""}
+  → kubelet's own memory usage
+
+Identify kubelet OOM:
+  dmesg | grep "Killed process" | grep kubelet
+  journalctl -u kubelet | grep -i "out of memory\|oomkilled"
+```
+
+> 💡 **Interview tip:** The "kubelet OOMKilled" scenario is one of the worst Kubernetes failure modes — kubelet dying means ALL pods on that node are evicted and the node goes NotReady. The root cause is almost always `enforceNodeAllocatable` not being set. Without it, the scheduler reserves memory (paper reservation) but pods can physically use more — stealing from kubelet. With `enforceNodeAllocatable: ["pods","kube-reserved","system-reserved"]`, Linux cgroups physically enforce the boundaries. The kubelet and system processes get their guaranteed memory even under maximum pod load. Always verify EKS bootstrap script version (newer versions set better defaults) and check with `kubectl describe node` under "Allocatable" — if allocatable RAM = total RAM, reservations are not configured.
+
+---
+
+### Q446 — AWS | Scenario-Based | Advanced
+
+> Implement **security incident response automation** using Lambda, EventBridge, and Systems Manager: (1) SSH BruteForce → block IP in WAF, (2) CryptoCurrency finding → isolate EC2, (3) Root credential usage → alert + freeze root.
+
+📁 **Reference:** `nawab312/AWS` — GuardDuty, EventBridge, Lambda automation sections
+
+#### Key Points to Cover:
+```
+Architecture:
+  GuardDuty finding → EventBridge → Lambda → automated response
+
+EventBridge rule for all GuardDuty findings:
+  {
+    "source": ["aws.guardduty"],
+    "detail-type": ["GuardDuty Finding"],
+    "detail": {
+      "severity": [{"numeric": [">=", 7]}]   # high severity only
+    }
+  }
+
+Lambda dispatcher (routes to specific handler):
+  def handler(event, context):
+      finding_type = event['detail']['type']
+      if 'SSHBruteForce' in finding_type:
+          block_ip_in_waf(event)
+      elif 'CryptoCurrency' in finding_type:
+          isolate_ec2(event)
+      elif 'RootCredentialUsage' in finding_type:
+          handle_root_usage(event)
+
+Scenario 1 — SSH BruteForce → WAF block:
+  def block_ip_in_waf(event):
+      attacker_ip = event['detail']['service']['action']['networkConnectionAction']['remoteIpDetails']['ipAddressV4']
+      waf = boto3.client('wafv2', region_name='us-east-1')
+
+      # Get current IP set:
+      response = waf.get_ip_set(
+          Name='BlockList', Scope='REGIONAL', Id=IP_SET_ID
+      )
+      current_addresses = response['IPSet']['Addresses']
+      lock_token = response['LockToken']
+
+      # Add attacker IP:
+      current_addresses.append(f"{attacker_ip}/32")
+      waf.update_ip_set(
+          Name='BlockList', Scope='REGIONAL', Id=IP_SET_ID,
+          Addresses=current_addresses, LockToken=lock_token
+      )
+      print(f"Blocked IP: {attacker_ip}")
+
+Scenario 2 — CryptoCurrency → Isolate EC2:
+  def isolate_ec2(event):
+      instance_id = event['detail']['resource']['instanceDetails']['instanceId']
+      ec2 = boto3.client('ec2')
+
+      # Create isolation security group (no inbound, no outbound):
+      isolation_sg = ec2.create_security_group(
+          GroupName=f'isolation-{instance_id}-{int(time.time())}',
+          Description='Isolated instance - security incident',
+          VpcId=get_vpc_id(instance_id)
+      )
+      sg_id = isolation_sg['GroupId']
+      # No rules added → default deny all
+
+      # Get current SGs before replacing:
+      instance = ec2.describe_instances(InstanceIds=[instance_id])
+      original_sgs = [sg['GroupId'] for sg in instance['Reservations'][0]['Instances'][0]['SecurityGroups']]
+
+      # Replace SGs with isolation SG:
+      ec2.modify_instance_attribute(
+          InstanceId=instance_id,
+          Groups=[sg_id]
+      )
+
+      # Take snapshot for forensics:
+      for volume in get_instance_volumes(instance_id):
+          ec2.create_snapshot(VolumeId=volume, Description=f'Forensic snapshot - {instance_id}')
+
+      # Tag instance:
+      ec2.create_tags(Resources=[instance_id], Tags=[
+          {'Key': 'SecurityStatus', 'Value': 'ISOLATED'},
+          {'Key': 'OriginalSGs', 'Value': ','.join(original_sgs)}
+      ])
+
+      # Send SSM command to capture memory dump:
+      ssm = boto3.client('ssm')
+      ssm.send_command(
+          InstanceIds=[instance_id],
+          DocumentName='AWS-RunShellScript',
+          Parameters={'commands': ['sudo dd if=/dev/mem of=/tmp/memory.dump']}
+      )
+
+Scenario 3 — Root Credential Usage → Alert + Freeze:
+  def handle_root_usage(event):
+      sns = boto3.client('sns')
+      # Immediate alert to security team:
+      sns.publish(
+          TopicArn=SECURITY_TEAM_TOPIC,
+          Subject='CRITICAL: AWS Root Credentials Used',
+          Message=json.dumps({
+              'event_time': event['detail']['createdAt'],
+              'source_ip': event['detail']['service']['action']['awsApiCallAction']['remoteIpDetails']['ipAddressV4'],
+              'action': event['detail']['service']['action']['awsApiCallAction']['api'],
+              'account': event['detail']['accountId']
+          })
+      )
+      # Note: Cannot programmatically "freeze" root — no API for it
+      # Best practice: root should have MFA enabled + hardware MFA
+      # Response: human intervention to change root password + audit
+```
+
+> 💡 **Interview tip:** Security automation is a "defense-in-depth in time" concept — the faster you isolate compromised resources, the less damage attacker can do. The EC2 isolation pattern (replace SGs with deny-all) is the production-standard first response to a compromised instance — it cuts network connectivity in seconds while preserving the instance for forensic analysis (don't terminate it!). The forensic steps matter: snapshot first (preserve disk state), memory dump if possible (volatile data), tag with original SGs (so you can restore if it's a false positive). Never delete suspicious instances immediately — evidence preservation is critical for incident response.
+
+---
+
+### Q447 — Linux / Bash | Scenario-Based | Advanced
+
+> Write a **Bash script for automated log analysis and pattern detection** across a distributed system — parallel SSH collection, error pattern extraction, correlation of errors across servers within 30-second windows, cascading failure detection, timeline output, and root cause hypothesis.
+
+📁 **Reference:** `nawab312/DSA` → `Linux` — log analysis, parallel SSH sections
 
 #### Key Points to Cover:
 ```bash
@@ -895,2931 +3871,514 @@ ndots and the search path problem:
 set -euo pipefail
 
 SERVERS_FILE="${1:-servers.txt}"
-THRESHOLD=80
+PATTERN_FILE="${2:-patterns.txt}"
+LOG_PATH="${3:-/var/log/app/application.log}"
+LOOK_BACK_MINUTES="${4:-60}"
+CORRELATION_WINDOW=30    # seconds within which events are considered correlated
+CASCADING_WINDOW=60      # seconds for cascading failure detection
 RESULTS_DIR=$(mktemp -d)
-MAX_PARALLEL=10
-SSH_TIMEOUT=10
+trap "rm -rf $RESULTS_DIR" EXIT
 
-cleanup() { rm -rf "$RESULTS_DIR"; }
-trap cleanup EXIT
+# Pattern file format: PATTERN_NAME|regex
+# Example: DB_ERROR|connection refused.*:5432
+#          TIMEOUT|timed out after
+#          MEMORY|out of memory
 
-check_server() {
+log() { echo "[$(date '+%H:%M:%S')] $*" >&2; }
+
+collect_logs() {
     local server="$1"
-    local result_file="$RESULTS_DIR/${server//\//_}.txt"
+    local result_file="$RESULTS_DIR/${server//[.:]/_}.log"
+    local since
+    since=$(date -d "${LOOK_BACK_MINUTES} minutes ago" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || \
+            date -v-${LOOK_BACK_MINUTES}M '+%Y-%m-%d %H:%M:%S')
 
-    # SSH with timeout, strict host key checking off for automation:
-    if ! ssh -o ConnectTimeout="$SSH_TIMEOUT" \
-             -o StrictHostKeyChecking=no \
-             -o BatchMode=yes \
-             "$server" "df -h" > "$result_file" 2>/dev/null; then
-        echo "FAILED:$server:SSH_ERROR" > "$result_file"
-        return 0  # don't fail script on individual server error
-    fi
-
-    # Parse df output — find partitions above threshold:
-    local alerts=""
-    while IFS= read -r line; do
-        # Skip header line:
-        [[ "$line" =~ ^Filesystem ]] && continue
-        # Extract usage percentage:
-        local usage
-        usage=$(echo "$line" | awk '{print $5}' | tr -d '%')
-        local mount
-        mount=$(echo "$line" | awk '{print $6}')
-        if [[ "$usage" =~ ^[0-9]+$ ]] && [ "$usage" -ge "$THRESHOLD" ]; then
-            alerts+="  ⚠️  ${mount}: ${usage}%\n"
-        fi
-    done < "$result_file"
-
-    if [ -n "$alerts" ]; then
-        echo "ALERT:$server"
-        echo -e "$alerts"
+    if ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+        "$server" \
+        "awk -v since=\"${since}\" '\$0 >= since' \"${LOG_PATH}\" 2>/dev/null | tail -10000" \
+        > "$result_file" 2>/dev/null; then
+        log "Collected logs from $server ($(wc -l < "$result_file") lines)"
+    else
+        log "FAILED: Cannot collect from $server"
+        echo "SSH_FAILED" > "$result_file"
     fi
 }
 
-export -f check_server
-export RESULTS_DIR THRESHOLD SSH_TIMEOUT
+extract_errors() {
+    local server="$1"
+    local result_file="$RESULTS_DIR/${server//[.:]/_}.log"
+    local errors_file="$RESULTS_DIR/${server//[.:]/_}.errors"
 
-# Validate input file:
-if [ ! -f "$SERVERS_FILE" ]; then
-    echo "ERROR: $SERVERS_FILE not found" >&2
-    exit 1
-fi
+    [[ ! -f "$result_file" ]] && return
+    [[ "$(cat "$result_file")" == "SSH_FAILED" ]] && return
 
-echo "============================================"
-echo "Disk Usage Report — $(date '+%Y-%m-%d %H:%M:%S')"
-echo "Threshold: ${THRESHOLD}%"
-echo "============================================"
-echo ""
+    # Extract timestamp and matched pattern:
+    while IFS='|' read -r pattern_name pattern_regex; do
+        grep -oP "^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.*" "$result_file" | \
+        grep -P "$pattern_regex" | \
+        awk -v server="$server" -v pattern="$pattern_name" \
+            '{print $1"T"$2"|"server"|"pattern"|"$0}' >> "$errors_file" 2>/dev/null || true
+    done < "$PATTERN_FILE"
+}
 
-# Run in parallel using xargs:
+correlate_events() {
+    # Combine all errors with timestamps, find events within correlation window
+    local all_errors="$RESULTS_DIR/all_errors.txt"
+    cat "$RESULTS_DIR/"*.errors 2>/dev/null | sort > "$all_errors"
+
+    echo ""
+    echo "=========================================="
+    echo "CORRELATED EVENTS (within ${CORRELATION_WINDOW}s window)"
+    echo "=========================================="
+
+    local prev_timestamp="" prev_servers=()
+    local cluster_start="" cluster_events=()
+
+    while IFS='|' read -r timestamp server pattern message; do
+        local ts_epoch
+        ts_epoch=$(date -d "${timestamp//T/ }" +%s 2>/dev/null || echo "0")
+
+        if [[ -n "$cluster_start" ]]; then
+            local cluster_epoch
+            cluster_epoch=$(date -d "${cluster_start//T/ }" +%s 2>/dev/null || echo "0")
+            local diff=$(( ts_epoch - cluster_epoch ))
+
+            if [[ "$diff" -le "$CORRELATION_WINDOW" ]]; then
+                cluster_events+=("$timestamp $server [$pattern]")
+            else
+                # Print cluster if it has multiple servers:
+                if [[ "${#cluster_events[@]}" -ge 2 ]]; then
+                    echo "  Correlated cluster starting $cluster_start:"
+                    for ev in "${cluster_events[@]}"; do echo "    $ev"; done
+                fi
+                cluster_start="$timestamp"
+                cluster_events=("$timestamp $server [$pattern]")
+            fi
+        else
+            cluster_start="$timestamp"
+            cluster_events=("$timestamp $server [$pattern]")
+        fi
+    done < "$all_errors"
+}
+
+detect_cascading() {
+    local all_errors="$RESULTS_DIR/all_errors.txt"
+    [[ ! -f "$all_errors" ]] && return
+
+    echo ""
+    echo "=========================================="
+    echo "CASCADING FAILURE DETECTION"
+    echo "=========================================="
+
+    # Find first error per server, check if subsequent servers fail within window:
+    declare -A first_error_time
+    while IFS='|' read -r timestamp server pattern message; do
+        [[ -z "${first_error_time[$server]+_}" ]] && first_error_time["$server"]="$timestamp"
+    done < "$all_errors"
+
+    # Sort servers by first error time:
+    local origin_server="" origin_time="" origin_epoch=0
+    for server in "${!first_error_time[@]}"; do
+        local ts="${first_error_time[$server]}"
+        local ep
+        ep=$(date -d "${ts//T/ }" +%s 2>/dev/null || echo "99999999999")
+        if [[ "$ep" -lt "$origin_epoch" || "$origin_epoch" == "0" ]]; then
+            origin_epoch="$ep"
+            origin_server="$server"
+            origin_time="$ts"
+        fi
+    done
+
+    echo "  First failure: $origin_server at $origin_time"
+    echo "  Subsequent failures within ${CASCADING_WINDOW}s:"
+    for server in "${!first_error_time[@]}"; do
+        [[ "$server" == "$origin_server" ]] && continue
+        local ts="${first_error_time[$server]}"
+        local ep
+        ep=$(date -d "${ts//T/ }" +%s 2>/dev/null || echo "0")
+        local diff=$(( ep - origin_epoch ))
+        if [[ "$diff" -ge 0 && "$diff" -le "$CASCADING_WINDOW" ]]; then
+            echo "    ${diff}s later: $server (first error: $ts)"
+        fi
+    done
+
+    echo ""
+    echo "ROOT CAUSE HYPOTHESIS:"
+    echo "  Primary suspect: $origin_server (first to show errors at $origin_time)"
+    echo "  Pattern: Errors spread from $origin_server → dependent services"
+    echo "  Recommendation: Investigate $origin_server logs around $origin_time"
+}
+
+# --- Main execution ---
 mapfile -t servers < "$SERVERS_FILE"
-total="${#servers[@]}"
-echo "Checking $total servers (max $MAX_PARALLEL parallel)..."
-echo ""
+log "Collecting logs from ${#servers[@]} servers in parallel..."
 
 printf '%s\n' "${servers[@]}" | \
-    xargs -P "$MAX_PARALLEL" -I{} bash -c 'check_server "$@"' _ {}
+    xargs -P 20 -I{} bash -c 'source '"$(realpath "$0")"'; collect_logs "$@"' _ {}
 
-echo ""
-echo "============================================"
-echo "Scan complete. Servers checked: $total"
+log "Extracting error patterns..."
+for server in "${servers[@]}"; do
+    extract_errors "$server"
+done
 
-# Count results:
-failed=$(grep -rl "FAILED:" "$RESULTS_DIR" 2>/dev/null | wc -l)
-echo "SSH failures: $failed"
-echo "============================================"
+correlate_events
+detect_cascading
+log "Analysis complete."
 ```
 
-> 💡 **Interview tip:** Three things make this production-quality: (1) **`-o BatchMode=yes`** in SSH prevents password prompts hanging the script when key auth fails — it immediately returns non-zero. (2) **`xargs -P`** for parallelism is cleaner than managing background jobs manually — it handles the concurrency limit automatically. (3) **`mapfile -t`** for reading the servers file is safer than `for server in $(cat file)` — it handles spaces in hostnames and preserves the array structure. Always mention `ConnectTimeout` — without it, an unreachable server hangs for the OS default TCP timeout (90+ seconds).
+> 💡 **Interview tip:** The **cascading failure detection** is what elevates this from log collection to incident intelligence. In distributed systems, a downstream dependency failure (DB going down) immediately causes upstream services to fail — the logs show errors appearing on multiple servers within seconds of each other. Identifying the **first server to show errors** is the root cause hypothesis: it's the upstream dependency, not the downstream services that are reacting to it. This is the "reading logs backwards" principle — the real cause is always the FIRST error in time, even if it produces fewer log lines than the cascade of downstream failures.
 
 ---
 
-### Q58 — AWS | Troubleshooting | Advanced
+### Q448 — Kubernetes | Conceptual | Advanced
 
-> Your application on AWS is experiencing **high latency and increased error rates** during business hours. Infrastructure looks healthy — EC2 running, RDS available, no alarms firing. Users are complaining. Where would you look?
+> Explain **Kubernetes Sigstore and Cosign** for container image signing. What problem does image signing solve that digest pinning alone does not? Explain keyless signing with **Fulcio CA** and **Rekor transparency log**. How do you enforce signed images with **`policy-controller`**?
 
-📁 **Reference:** `nawab312/AWS` — CloudWatch, ALB, RDS Performance Insights, X-Ray sections
-
-#### Key Points to Cover:
-```
-Step 1 — ALB metrics (first stop):
-  CloudWatch → ApplicationELB:
-  → TargetResponseTime: is p99 high? (shows backend slowness)
-  → HTTPCode_Target_5XX_Count: backend errors?
-  → HTTPCode_ELB_5XX_Count: ELB itself erroring?
-  → ActiveConnectionCount: connection exhaustion?
-  → RejectedConnectionCount: hitting surge queue limit?
-
-Step 2 — RDS Performance Insights:
-  → Top SQL queries by load (which query is slow?)
-  → DBLoad: is DB CPU maxed during business hours?
-  → Wait events: "lock" wait? "io" wait?
-  → ActiveSessions vs max_connections
-  → Slow query log in CloudWatch Logs
-
-Step 3 — EC2 / Application level:
-  CloudWatch → EC2:
-  → CPUUtilization: maxed out?
-  → NetworkIn/Out: bandwidth saturation?
-  → StatusCheckFailed: instance health?
-
-  Application logs in CloudWatch Logs:
-  → Log Insights query:
-    fields @timestamp, @message
-    | filter @message like "ERROR"
-    | stats count() as errors by bin(5m)
-    | sort @timestamp desc
-  → Are errors concentrated in specific code paths?
-
-Step 4 — AWS X-Ray (distributed trace):
-  → Enable X-Ray on Lambda / EC2 / ECS
-  → Service map shows latency per service
-  → Trace viewer shows which downstream call is slow
-  → "Is slowness in app code, DB query, or external API?"
-
-Step 5 — Time correlation:
-  → "During business hours" → likely user load driven
-  → Check ASG scaling: did it scale? did scale take too long?
-  → Check RDS: read replicas handling read load?
-  → Check ElastiCache: cache hit rate dropping under load?
-
-Step 6 — Infrastructure not directly monitored:
-  → External API your app calls: their status page?
-  → DNS TTL: are clients getting stale IPs?
-  → Keep-alive timeout: HTTP connections being dropped?
-
-Common root causes for "healthy infra, unhappy users":
-  → RDS connection pool exhaustion (not visible in standard metrics)
-  → Slow N+1 DB queries (fast individually, slow at scale)
-  → Missing index on RDS (query plan changes under load)
-  → Cache stampede (all caches expired simultaneously)
-  → Thread pool exhaustion in app (not a CPU issue)
-```
-
-> 💡 **Interview tip:** "Infrastructure looks healthy but users are unhappy" is a classic SRE scenario. The key insight: **standard alarms don't catch everything**. CPU at 30% doesn't mean the app is healthy — if the app has 100 threads and 100 are blocked waiting for DB connections, CPU is low but every request times out. This is why **RDS Performance Insights** and **X-Ray** are essential — they show what's happening INSIDE the application layer that CloudWatch metrics can't see. Always end with X-Ray as the definitive answer: it shows the actual request trace and exactly where time is spent.
-
----
-
-### Q59 — ArgoCD | Scenario-Based | Advanced
-
-> Set up a GitOps workflow with ArgoCD for a microservice: 3 environments (dev/staging/prod), Helm charts, manual approval for prod, different values per environment. How do you structure the Git repo and configure ArgoCD?
-
-📁 **Reference:** `nawab312/CI_CD` → `ArgoCD` — Helm, multi-environment, sync policies sections
+📁 **Reference:** `nawab312/Kubernetes` → `07_SECURITY.md`, `13_DOCKER_CONTAINER_FUNDAMENTALS.md`
 
 #### Key Points to Cover:
 ```
-Git repository structure (two-repo pattern — recommended):
-  app-repo/          ← application source code + Helm chart
-    Chart.yaml
-    templates/
-    values.yaml      ← default values
-    values-dev.yaml
-    values-staging.yaml
-    values-prod.yaml
+Digest pinning limitation:
+  image: nginx@sha256:abc123...   # specific digest
+  Problem: WHAT produced that digest? Was it from your CI/CD? Or an attacker?
+  Digest pinning: ensures same image content each time
+  Image signing: ensures image was produced by YOUR CI/CD pipeline
 
-  gitops-repo/       ← ArgoCD manifests (separate repo)
-    apps/
-      payment-service-dev.yaml
-      payment-service-staging.yaml
-      payment-service-prod.yaml
+Cosign + Sigstore:
+  Sigstore: open source project (Linux Foundation) for software signing
+  Cosign:   tool to sign/verify container images (Sigstore project)
+  Fulcio:   Certificate Authority that issues short-lived certs to CI identities
+  Rekor:    append-only transparency log (records all signing events)
 
-ArgoCD Application for each environment:
+Keyless signing (modern approach):
+  Traditional: manage a long-lived private key (key storage, rotation problem)
+  Keyless:     use OIDC identity (GitHub Actions token, Google workload identity)
 
-# payment-service-dev.yaml:
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: payment-service-dev
-  namespace: argocd
-spec:
-  project: dev-project
-  source:
-    repoURL: https://github.com/org/app-repo
-    targetRevision: main          # track main branch
-    path: .
-    helm:
-      valueFiles:
-      - values.yaml
-      - values-dev.yaml
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: payment-dev
-  syncPolicy:
-    automated:                    # AUTO sync for dev
-      prune: true
-      selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
+  How keyless signing works in GitHub Actions:
+  1. CI job runs → gets OIDC token from GitHub:
+     token: "job:org/repo@refs/heads/main:workflow:build:actor:bot"
+  2. cosign exchanges token with Fulcio CA
+  3. Fulcio issues short-lived cert (valid 10 min) with CI identity embedded
+  4. cosign signs the image digest with ephemeral private key
+  5. Signature + cert stored in OCI registry (as separate OCI artifact)
+  6. Fulcio records the cert in Rekor transparency log
+  7. cosign verify checks: Rekor log + cert chain + GitHub OIDC issuer
 
-# payment-service-prod.yaml:
-spec:
-  source:
-    targetRevision: v1.2.3        # PINNED tag for prod (not main)
-    helm:
-      valueFiles:
-      - values.yaml
-      - values-prod.yaml
-  syncPolicy:
-    automated: null               # NO auto-sync for prod (manual only)
-    # Prod: manually click Sync in ArgoCD UI after approval
+  # Sign in GitHub Actions (no key management):
+  - name: Sign image with Cosign
+    uses: sigstore/cosign-installer@main
+  - run: |
+      cosign sign \
+        --yes \                    # accept keyless
+        --certificate-identity-regexp "https://github.com/myorg/myrepo/.*" \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+        ${ECR_REGISTRY}/${IMAGE_NAME}@${DIGEST}
 
-# ArgoCD Project for access control:
-apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: prod-project
-spec:
-  destinations:
-  - namespace: payment-prod
-    server: https://prod-cluster.example.com
-  sourceRepos:
-  - 'https://github.com/org/app-repo'
-  roles:
-  - name: deployer
-    policies:
-    - p, proj:prod-project:deployer, applications, sync, prod-project/*, allow
-    groups:
-    - platform-team     # only platform-team can sync to prod
+  # Verify (in admission webhook or manually):
+  cosign verify \
+    --certificate-identity-regexp "https://github.com/myorg/myrepo/.*" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    ${IMAGE}
 
-# Environment differences via values files:
-# values-dev.yaml:    replicas: 1, cpu: 100m, image.tag: main-abc1234
-# values-staging.yaml: replicas: 2, cpu: 500m, image.tag: v1.2.3-rc1
-# values-prod.yaml:    replicas: 5, cpu: 2000m, image.tag: v1.2.3
+Enforce via policy-controller (Sigstore):
+  # Install policy-controller (replaces ImagePolicyWebhook):
+  helm install policy-controller sigstore/policy-controller \
+    --namespace cosign-system
 
-# CI pipeline updates image tag in values files:
-# dev: auto-commit new SHA to values-dev.yaml → ArgoCD auto-syncs
-# prod: PR to update values-prod.yaml → human reviews → merges → manual sync
-```
-
-> 💡 **Interview tip:** The **two-repo pattern** (app code in one repo, ArgoCD manifests in another) is the production standard. Benefits: (1) Kubernetes manifests have their own history separate from app code, (2) different teams can have different permissions to each repo, (3) no circular dependency (CI commits to gitops-repo, ArgoCD reads gitops-repo). The **sync policy difference** between environments is critical: dev = `automated: {prune: true, selfHeal: true}` (any merge to main deploys instantly), prod = `automated: null` (human must click Sync after reviewing changes). Use ArgoCD Projects + RBAC to ensure only the platform team can trigger prod syncs.
-
----
-
-### Q60 — Terraform | Troubleshooting | Advanced
-
-> You run `terraform plan` and see **unexpected resource replacements** — Terraform wants to destroy and recreate resources you didn't change. What are the possible reasons and how do you investigate and prevent them?
-
-📁 **Reference:** `nawab312/Terraform` — state management, lifecycle, `ignore_changes` sections
-
-#### Key Points to Cover:
-```
-Common causes of unexpected replacements:
-
-1. ForceNew attribute changed:
-   → Some attributes are marked "ForceNew" — changing them requires recreation
-   → Common: aws_instance ami, availability_zone, subnet_id
-   → Plan shows: "forces replacement"
-   → Fix: use ignore_changes if the attribute changes outside Terraform
-
-2. Resource drifted (manually changed in AWS):
-   → Someone changed a resource in console
-   → Terraform state says X, AWS has Y → forces replacement
-   → Diagnose: terraform refresh, then terraform plan
-
-3. State file mismatch:
-   → State says resource exists with old config
-   → .tf file has new config
-   → Terraform computes diff → replacement
-   → Diagnose: terraform state show aws_instance.web
-
-4. Provider version upgrade:
-   → New provider version changes attribute handling
-   → Fields that were ignored now cause diffs
-   → Diagnose: check provider changelog
-
-5. Random IDs or timestamps in resource names:
-   → resource "aws_iam_role" "app" { name = "role-${uuid()}" }
-   → uuid() generates new value each plan → forces replacement
-   → Fix: use static name or store in local
-
-6. Computed values stored differently:
-   → AWS returns value in different format than Terraform expects
-   → Example: tags stored as map vs list
-
-Investigation steps:
-  # Step 1: Read the plan carefully:
-  terraform plan 2>&1 | grep -A5 "forces replacement"
-
-  # Step 2: Check what attribute is causing replacement:
-  # Plan shows: "~ subnet_id: "subnet-old" -> "subnet-new" # forces replacement"
-
-  # Step 3: Check current state vs real AWS:
-  terraform state show aws_instance.web
-
-  # Step 4: If drift, run refresh:
-  terraform refresh
-  terraform plan  # see if replacement goes away
-
-Fixes:
-  # lifecycle ignore_changes (most common fix):
-  resource "aws_instance" "web" {
-    lifecycle {
-      ignore_changes = [
-        ami,          # don't replace when AMI ID changes
-        tags["LastUpdated"],  # ignore auto-set tags
-      ]
-    }
-  }
-
-  # For auto-scaling resources, ignore replicas:
-  resource "aws_ecs_service" "app" {
-    lifecycle {
-      ignore_changes = [desired_count]  # HPA manages this
-    }
-  }
-```
-
-> 💡 **Interview tip:** The `lifecycle { ignore_changes }` block is the **most used Terraform fix** in production. The most common scenario: AWS automatically adds tags (like `aws:cloudformation:stack-name`) to resources after creation, Terraform doesn't know about them, sees a diff → wants to recreate. Fix: `ignore_changes = [tags]`. Another classic: **ECS desired_count** — Terraform sets it to 3 in config, but autoscaling changes it to 5 at runtime. Next `terraform plan` sees 3 vs 5 → wants to set back to 3. Fix: `ignore_changes = [desired_count]`. The `# forces replacement` comment in `terraform plan` output is your first signal — always read it before applying.
-
----
-
-### Q61 — Kubernetes | Scenario-Based | Advanced
-
-> Your team is migrating a **PostgreSQL database** (500GB) from a VM to Kubernetes with **minimal downtime**. Walk through your migration strategy, Kubernetes resources used, and how you minimize downtime.
-
-📁 **Reference:** `nawab312/Kubernetes` → `04_STORAGE.md`, `02_WORKLOADS.md`
-
-#### Key Points to Cover:
-```
-Strategy: Phased migration with streaming replication to minimize downtime
-
-Phase 1 — Set up K8s PostgreSQL (days before cutover):
-  # Use StatefulSet with PVC:
-  apiVersion: apps/v1
-  kind: StatefulSet
+  # Create ClusterImagePolicy:
+  apiVersion: policy.sigstore.dev/v1alpha1
+  kind: ClusterImagePolicy
   metadata:
-    name: postgres
+    name: require-signed-images
   spec:
-    serviceName: "postgres"
-    replicas: 1
-    volumeClaimTemplates:
-    - metadata:
-        name: postgres-data
-      spec:
-        accessModes: [ReadWriteOnce]
-        storageClassName: gp3-encrypted
-        resources:
-          requests:
-            storage: 600Gi    # > 500GB current
-    template:
-      spec:
-        containers:
-        - name: postgres
-          image: postgres:15
-          resources:
-            requests:
-              memory: 8Gi
-              cpu: "2"
-            limits:
-              memory: 16Gi
-              cpu: "4"
+    images:
+    - glob: "*.dkr.ecr.us-east-1.amazonaws.com/**"    # all ECR images
+    authorities:
+    - keyless:
+        url: https://fulcio.sigstore.dev
+        identities:
+        - issuer: https://token.actions.githubusercontent.com
+          subjectRegExp: "https://github.com/myorg/.*/.github/workflows/build.yaml@refs/heads/main"
+    # Only images signed by main branch build workflow are allowed
 
-  # StorageClass for EBS gp3:
-  apiVersion: storage.k8s.io/v1
-  kind: StorageClass
-  metadata:
-    name: gp3-encrypted
-  provisioner: ebs.csi.aws.com
-  parameters:
-    type: gp3
-    encrypted: "true"
-
-Phase 2 — Initial data load (while app still on VM):
-  # pg_dump → restore to K8s PostgreSQL
-  # For 500GB: use pg_basebackup (faster than pg_dump):
-  pg_basebackup -h vm-postgres -U replicator \
-    -D /postgres-data -P -Xs -R
-  # This creates a base backup AND sets up streaming replication
-
-Phase 3 — Set up streaming replication VM → K8s:
-  # K8s PostgreSQL becomes a REPLICA of VM PostgreSQL
-  # Continuously applying WAL changes
-  # Lag: typically < 1 second
-
-Phase 4 — Verify K8s replica is caught up:
-  # Check replication lag:
-  SELECT now() - pg_last_xact_replay_timestamp() AS replication_lag;
-  # Should be < 1 second
-
-Phase 5 — Cutover (minimal downtime window):
-  # T+0: Stop writes to VM PostgreSQL (maintenance mode in app)
-  # T+10s: Verify K8s replica is fully caught up (lag = 0)
-  # T+15s: Promote K8s replica to primary:
-  SELECT pg_promote();
-  # T+20s: Update app connection string to K8s service
-  # T+30s: Start writes to K8s PostgreSQL
-  # TOTAL DOWNTIME: ~30 seconds
-
-Phase 6 — Validation:
-  # Test read/write on K8s PostgreSQL
-  # Monitor: connections, query latency, replication (if adding replicas)
-  # Keep VM PostgreSQL as emergency fallback for 24 hours
-
-Key K8s resources used:
-  StatefulSet:            stable pod identity for postgres-0
-  Headless Service:       postgres-0.postgres.namespace stable DNS
-  PVC + StorageClass:     persistent encrypted EBS storage
-  Secret:                 postgres credentials (or use Vault)
-  ConfigMap:              postgresql.conf tuning parameters
+  # Test: try to deploy unsigned image → BLOCKED
+  kubectl run test --image=nginx:latest
+  # Error: image nginx:latest is not signed or signature verification failed
 ```
 
-> 💡 **Interview tip:** The **streaming replication approach** is the correct answer — it reduces downtime to ~30 seconds regardless of database size. The naive approach (dump → restore → switch) takes hours of downtime for 500GB. The key: set up K8s PostgreSQL as a replica WHILE the VM is still the primary, let it catch up fully, then promote — the only downtime is the seconds between stopping writes and promoting. Also mention: use the **CloudNativePG operator** in production rather than managing a raw StatefulSet — it handles replication, failover, backup, and connection pooling automatically.
+> 💡 **Interview tip:** The Sigstore/Cosign pitch for interviews: **keyless signing eliminates the private key management problem**. Traditional image signing requires: generate key pair, store private key securely, rotate regularly, distribute public key. With keyless signing: no key to manage — the CI identity (GitHub Actions OIDC token) IS the signing credential, and the short-lived cert proves which exact pipeline produced the image. The **Rekor transparency log** is the audit trail — every signing event is permanently recorded, so you can prove (or disprove) that a specific image was built by your pipeline at a specific time. This is the foundation of supply chain attestations (SLSA).
 
 ---
 
-### Q62 — ELK Stack | Scenario-Based | Advanced
+### Q449 — AWS + Kubernetes | Scenario-Based | Advanced
 
-> Your **Elasticsearch cluster** is showing **RED health status**. Kibana shows no data and Logstash is reporting indexing failures. Walk through your complete investigation and recovery.
+> Design a **cost-optimized EKS architecture** for a startup: scale to near-zero at night, handle morning traffic spikes within 2 minutes, 80% Spot with On-Demand fallback, bin packing, auto right-sizing. Use Karpenter, KEDA, VPA, cluster sleep schedules, Spot interruption handling.
 
-📁 **Reference:** `nawab312/Monitoring-and-Observability` → `ELK_Stack`
-
-#### Key Points to Cover:
-```
-Step 1 — Check cluster health:
-  curl http://localhost:9200/_cluster/health?pretty
-  # RED: at least one primary shard unassigned
-  # YELLOW: all primaries assigned, some replicas unassigned
-  # GREEN: all shards assigned
-
-  curl http://localhost:9200/_cluster/health?level=indices&pretty
-  # Shows health per index → which index is RED?
-
-Step 2 — Find unassigned shards:
-  curl "http://localhost:9200/_cat/shards?v&h=index,shard,prirep,state,unassigned.reason"
-  # Shows exactly which shards are unassigned and WHY
-  # UNASSIGNED reasons: NODE_LEFT, ALLOCATION_FAILED, INDEX_CREATED
-
-Step 3 — Get allocation explanation:
-  curl -X GET "localhost:9200/_cluster/allocation/explain?pretty" \
-    -H 'Content-Type: application/json' \
-    -d '{"index":"my-index","shard":0,"primary":true}'
-  # This is the most useful command — explains exactly why shard isn't allocated
-  # Common: "no valid shard copy found" → data node lost AND no replica
-
-Step 4 — Check node status:
-  curl "http://localhost:9200/_cat/nodes?v"
-  # Is a data node missing? (node failed, took shards with it)
-  # If no replica exists for those shards → RED
-
-Step 5 — Recovery options:
-
-  Option A: Node comes back (wait):
-    → If node just rebooted → wait for it to rejoin
-    → Shards will be reassigned automatically
-
-  Option B: Restore from snapshot:
-    # Check available snapshots:
-    curl "http://localhost:9200/_snapshot/my-repo/_all?pretty"
-    # Restore specific index:
-    curl -X POST "localhost:9200/_snapshot/my-repo/snapshot-1/_restore" \
-      -H 'Content-Type: application/json' \
-      -d '{"indices": "my-index-2024.01"}'
-
-  Option C: Force allocate (data loss risk — last resort):
-    curl -X POST "localhost:9200/_cluster/reroute" \
-      -d '{"commands":[{"allocate_stale_primary":{
-        "index":"my-index","shard":0,"node":"node-1",
-        "accept_data_loss":true}}]}'
-    # WARNING: uses potentially stale shard — some data may be lost
-
-Step 6 — Fix Logstash indexing failures:
-  # Check Logstash logs:
-  journalctl -u logstash -n 100
-  # Common: "index_closed_exception" or "index_not_found_exception"
-  # Fix: ensure index template exists, cluster is GREEN before retrying
-
-Step 7 — Prevention:
-  → Always configure replicas: number_of_replicas: 1 (minimum)
-  → Configure S3 snapshot policy: daily snapshots
-  → Monitor: elasticsearch_cluster_health_status != 0 → alert
-  → Set up ILM (Index Lifecycle Management) to prevent disk full
-```
-
-> 💡 **Interview tip:** RED cluster status = **primary shard unassigned** = that data is currently inaccessible. The fastest diagnostic: `_cluster/allocation/explain` — this single API call tells you exactly why the shard isn't allocating (not enough disk space, node missing, shard corrupted). The most common production RED scenario: a data node was terminated and it held the ONLY copy of some shards (replica count was 0). This is why `number_of_replicas: 1` is non-negotiable for production. Always mention: **configure automatic snapshots to S3 from day one** — they're your safety net when cluster recovery isn't possible.
-
----
-
-### Q63 — GitHub Actions | Conceptual | Advanced
-
-> Explain the difference between **`jobs`** and **`steps`** in GitHub Actions. When do jobs run in parallel vs sequentially? Explain **reusable workflows** and **composite actions** — what they are and when to use each.
-
-📁 **Reference:** `nawab312/CI_CD` → `GithubActions` — workflow structure sections
+📁 **Reference:** `nawab312/Kubernetes`, `nawab312/AWS` — EKS cost optimization sections
 
 #### Key Points to Cover:
 ```
-Jobs vs Steps:
-  Step:
-    → Individual task within a job
-    → Runs sequentially (one after another in the job)
-    → Shares: runner, filesystem, environment variables
-    → Types: uses (action) or run (shell command)
+Architecture overview:
+  Karpenter:    node provisioning (replaces Cluster Autoscaler)
+  KEDA:         pod scaling based on external metrics (SQS, Kafka, HTTP traffic)
+  VPA:          right-size pod requests/limits automatically
+  Kube-Downscaler: scale to zero during off-hours
+  Spot Interruption Handler: graceful handling of Spot terminations
 
-  Job:
-    → Group of steps running on ONE runner
-    → By DEFAULT: all jobs run in PARALLEL
-    → Must declare needs: [other-job] to run sequentially
-    → Each job gets a FRESH runner (no shared filesystem)
-    → Communication between jobs: via outputs + artifacts
-
-  # Parallel (default — both jobs start simultaneously):
-  jobs:
-    lint:        # starts immediately
-      steps: ...
-    unit-test:   # starts immediately (parallel with lint)
-      steps: ...
-    deploy:
-      needs: [lint, unit-test]  # waits for both to succeed
-      steps: ...
-
-Reusable Workflows:
-  → A complete workflow file called from another workflow
-  → Trigger: workflow_call
-  → Can have: multiple jobs, complex logic, secrets passing
-  → Defined in: .github/workflows/reusable-build.yml
-  → Called from: any repo with permissions
-
-  # reusable-build.yml (called workflow):
-  on:
-    workflow_call:
-      inputs:
-        image-name:
-          type: string
-          required: true
-      secrets:
-        ECR_ROLE_ARN:
-          required: true
-  jobs:
-    build-and-push:
-      runs-on: ubuntu-latest
-      steps:
-      - uses: actions/checkout@v4
-      - name: Build and push to ECR
-        run: docker build -t ${{ inputs.image-name }} .
-
-  # caller-workflow.yml:
-  jobs:
-    call-build:
-      uses: myorg/.github/.github/workflows/reusable-build.yml@main
-      with:
-        image-name: myapp
-      secrets:
-        ECR_ROLE_ARN: ${{ secrets.ECR_ROLE_ARN }}
-
-Composite Actions:
-  → Custom action made of multiple steps (no jobs)
-  → Defined in: action.yml in a repo
-  → Called as a single step with uses:
-  → Cannot have multiple jobs or complex workflow features
-
-  # .github/actions/setup-node/action.yml:
-  name: 'Setup Node'
-  inputs:
-    node-version:
-      default: '20'
-  runs:
-    using: composite
-    steps:
-    - uses: actions/setup-node@v4
-      with:
-        node-version: ${{ inputs.node-version }}
-    - run: npm ci
-      shell: bash
-    - run: npm run lint
-      shell: bash
-
-  # Used as a single step:
-  steps:
-  - uses: ./.github/actions/setup-node
-    with:
-      node-version: '20'
-
-When to use which:
-  Composite action:    reuse STEPS across jobs in same/different repos
-                       → small, focused, step-level reuse
-  Reusable workflow:   reuse entire JOB SEQUENCES including deployment logic
-                       → large, complete pipeline reuse with secrets/environments
-  Custom Docker action: when you need custom environment not available in runners
-```
-
-> 💡 **Interview tip:** The clearest distinction: **composite action = reusable steps**, **reusable workflow = reusable jobs**. If you need to share "checkout + setup node + npm ci" (3 steps) across 20 repos, use a composite action. If you need to share "test → build → push to ECR → deploy to staging" (a full pipeline with multiple jobs, environments, and secrets), use a reusable workflow. The biggest benefit of reusable workflows: **centralized security scanning** — define a `security-scan.yml` reusable workflow, call it from all 50 repos. When you add a new scan (e.g., Trivy), one change propagates everywhere.
-
----
-
-### Q64 — AWS | Scenario-Based | Advanced
-
-> Your company wants to implement a **disaster recovery strategy** for a critical application in `us-east-1`. **RTO is 1 hour**, **RPO is 15 minutes**. What strategy, services, and testing approach would you use?
-
-📁 **Reference:** `nawab312/AWS` — Disaster Recovery, RDS, Route53, S3 Cross-Region Replication sections
-
-#### Key Points to Cover:
-```
-DR Strategies (choose based on RTO/RPO):
-  Backup & Restore:    RTO hours-days,  RPO hours    — cheapest
-  Pilot Light:         RTO 10-60 min,   RPO minutes  — matches requirement
-  Warm Standby:        RTO minutes,     RPO seconds  — more expensive
-  Multi-Site Active:   RTO seconds,     RPO near-zero — most expensive
-
-RTO=1hr + RPO=15min → Pilot Light strategy:
-  → Keep minimal "pilot light" running in us-west-2
-  → Scale up on DR event to full capacity
-
-Architecture:
-
-  Primary (us-east-1):          DR (us-west-2):
-  ──────────────────            ──────────────────
-  ALB                           ALB (ready, no traffic)
-  EC2 ASG (full size)           EC2 Launch Template (no instances yet)
-  RDS Primary                   RDS Read Replica (auto-syncing)
-  ElastiCache                   ElastiCache (not running)
-  S3 Bucket                     S3 Bucket (Cross-Region Replication)
-  ECR Images                    ECR Replicated
-
-RDS setup (RPO = 15 min):
-  → RDS Multi-AZ in us-east-1 (HA within region)
-  → RDS Read Replica in us-west-2 (cross-region, lag < 15 min typically)
-  → On DR: promote replica to primary (takes ~3 min)
-
-S3 Cross-Region Replication:
-  aws s3api put-bucket-replication --bucket primary-bucket \
-    --replication-configuration '{
-      "Role": "arn:aws:iam::123:role/replication-role",
-      "Rules": [{"Status":"Enabled",
-        "Destination":{"Bucket":"arn:aws:s3:::dr-bucket",
-        "ReplicaKmsKeyID":"arn:aws:kms:us-west-2:..."}}]}'
-
-Route53 failover:
-  # Health check on primary ALB:
-  Primary record:  app.company.com → us-east-1-alb (Primary routing policy)
-  DR record:       app.company.com → us-west-2-alb (Secondary routing policy)
-  # When health check fails → Route53 auto-switches to DR
-
-DR Runbook (RTO = 1 hour):
-  T+0:    DR declared, start runbook
-  T+5:    Promote RDS replica in us-west-2
-  T+10:   Scale up EC2 ASG in us-west-2 (Launch Template scales to full size)
-  T+20:   Validate app connectivity in DR region
-  T+30:   Update Route53 if health check didn't auto-failover
-  T+60:   Full DR validation complete (within RTO)
-
-DR Testing:
-  → Quarterly: tabletop exercise (walk through runbook)
-  → Semi-annual: actual DR drill (fail traffic to us-west-2)
-  → Chaos Engineering: AWS Fault Injection Simulator
-  → Never test in production business hours
-```
-
-> 💡 **Interview tip:** Always **match the DR strategy to the RTO/RPO** — don't over-engineer. RTO=1hr and RPO=15min is achievable with Pilot Light (much cheaper than Warm Standby). The most critical component: **automated Route53 health check failover** — without automation, your 1-hour RTO is at risk of human error and slow response. Also mention **DR testing is as important as the DR plan** — a plan that has never been tested will fail when you need it most. Netflix's approach: run Chaos Monkey continuously so failures are discovered before they become disasters.
-
----
-
-### Q65 — Prometheus | Troubleshooting | Advanced
-
-> Your Prometheus is consuming excessive memory and crashing with OOM. The `/metrics` endpoint shows extremely high `prometheus_tsdb_head_series` count. What is causing this and how do you fix it?
-
-📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Prometheus` — TSDB, cardinality sections
-
-#### Key Points to Cover:
-```
-Root cause: HIGH CARDINALITY
-
-prometheus_tsdb_head_series = number of unique time series in memory
-Normal: 10,000 - 100,000 series
-Problem: 1,000,000+ series → OOM
-
-Each unique combination of label values = 1 time series
-Memory per series: ~3KB average
-
-10,000 series  = ~30MB  (fine)
-1,000,000 series = ~3GB (OOM risk)
-
-Common cardinality explosions:
-  1. User ID in label:
-     http_requests_total{user_id="user-123456"}  ← NEVER DO THIS
-     1M users = 1M series for ONE metric
-
-  2. Unbounded dynamic labels:
-     http_requests_total{url="/api/users/123/orders"}  ← NEVER
-     normalize to: {route="/api/users/:id/orders"}
-
-  3. Request ID / trace ID in label:
-     request_latency{request_id="abc-123-def"}  ← NEVER
-
-  4. Too many targets × too many metrics:
-     1,000 pods × 500 metrics = 500,000 series (can be legitimate)
-
-Diagnosis:
-  # Find top metrics by cardinality:
-  curl -s http://prometheus:9090/api/v1/label/__name__/values | \
-    jq -r '.data[]' | while read metric; do
-      count=$(curl -s "http://prometheus:9090/api/v1/query?query=count($metric)" | \
-        jq -r '.data.result[0].value[1] // 0')
-      echo "$count $metric"
-    done | sort -rn | head -20
-
-  # Or use Prometheus Cardinality Explorer (UI > Status > TSDB Status)
-  # Shows: top metrics by series count, top label names by series count
-
-Fixes:
-  1. Remove high-cardinality labels:
-     # In app code: don't add user_id/request_id to Prometheus labels
-     # In relabeling: drop the label before storing
-
-  2. metric_relabel_configs to drop problematic labels:
-     scrape_configs:
-     - job_name: myapp
-       metric_relabel_configs:
-       - source_labels: [__name__]
-         regex: 'http_requests_total'
-         action: keep
-       - regex: 'user_id|request_id|trace_id'
-         action: labeldrop   # drop these labels before storing
-
-  3. Reduce retention / increase resources:
-     --storage.tsdb.retention.time=15d  # shorter retention = less memory
-     --storage.tsdb.max-block-duration=2h
-
-  4. Recording rules to pre-aggregate:
-     # Instead of querying 1M series per dashboard load:
-     - record: job:http_requests:rate5m
-       expr: sum by(job)(rate(http_requests_total[5m]))
-     # Now dashboard queries 1 series instead of 1M
-```
-
-> 💡 **Interview tip:** High cardinality is **the #1 Prometheus scalability problem** and the answer that separates junior from senior knowledge. The key rule: **labels must have bounded cardinality** — if a label value can be one of millions of possibilities (user ID, request ID, URL path), it will OOM your Prometheus. The solution has two parts: (1) fix at the source (don't instrument with high-cardinality labels), (2) fix at ingest with `metric_relabel_configs` `labeldrop`. Always check `TSDB Status` in the Prometheus UI first — it shows exactly which metric and which label is the cardinality bomb.
-
----
-
-### Q66 — Kubernetes | Conceptual | Advanced
-
-> Explain **Kubernetes Service Mesh** and specifically **Istio**. What problems does it solve that standard Kubernetes networking cannot? Explain **mTLS**, **traffic shifting**, and **circuit breaking** in the context of Istio.
-
-📁 **Reference:** `nawab312/Kubernetes` → `11_ISTIO_SERVICE_MESH.md`
-
-#### Key Points to Cover:
-```
-What standard K8s networking lacks:
-  → No encryption between pods (traffic is plaintext)
-  → No built-in traffic management (weighted routing)
-  → No circuit breaking
-  → No observability at L7 (HTTP/gRPC) layer
-  → Security requires application-level implementation
-
-Istio architecture:
-  Control Plane: istiod (Pilot + Citadel + Galley)
-  Data Plane:    Envoy sidecar injected into every pod
-  → Sidecar intercepts ALL pod network traffic (transparent)
-  → App doesn't know Istio exists — zero code changes
-
-mTLS (Mutual TLS):
-  Standard TLS: client verifies server identity (HTTPS)
-  mTLS:         BOTH client AND server verify each other
-  
-  With Istio:
-  → Envoy on pod A generates cert, Envoy on pod B generates cert
-  → Certs issued by istiod (cluster CA)
-  → All pod-to-pod traffic encrypted and mutually authenticated
-  → Zero trust: even inside the cluster, identity verified
-
-  PeerAuthentication (enforce mTLS):
-  apiVersion: security.istio.io/v1beta1
-  kind: PeerAuthentication
+Karpenter configuration (Spot + bin packing):
+  apiVersion: karpenter.sh/v1alpha5
+  kind: Provisioner
   metadata:
     name: default
-    namespace: production
   spec:
-    mtls:
-      mode: STRICT  # reject non-mTLS traffic
-
-Traffic Shifting (canary/blue-green):
-  VirtualService routes traffic by weight:
-  apiVersion: networking.istio.io/v1alpha3
-  kind: VirtualService
-  metadata:
-    name: payment-service
-  spec:
-    hosts: [payment-service]
-    http:
-    - route:
-      - destination:
-          host: payment-service
-          subset: v1
-        weight: 90
-      - destination:
-          host: payment-service
-          subset: v2   # new version
-        weight: 10   # 10% to canary
-
-Circuit Breaking:
-  Stops cascading failures — if Service B is slow, don't queue requests
-  apiVersion: networking.istio.io/v1alpha3
-  kind: DestinationRule
-  spec:
-    trafficPolicy:
-      connectionPool:
-        http:
-          http1MaxPendingRequests: 100
-          http2MaxRequests: 1000
-      outlierDetection:
-        consecutive5xxErrors: 5      # after 5 errors
-        interval: 30s
-        baseEjectionTime: 30s        # eject for 30 seconds
-        maxEjectionPercent: 50
-
-Observability (automatic with Istio):
-  → L7 metrics: request rate, error rate, latency per service
-  → Distributed tracing: Jaeger/Zipkin integration
-  → Service graph: visualize all service dependencies
-```
-
-> 💡 **Interview tip:** The killer Istio feature for interviews: **zero-code mTLS**. Without Istio, adding mutual TLS between 20 microservices requires modifying all 20 services. With Istio, one `PeerAuthentication` YAML enables mTLS cluster-wide — no code change. This is the "why use a service mesh?" answer. Also mention the trade-off: Istio adds **~7ms latency per hop** and ~128MB memory per pod (Envoy sidecar). For latency-sensitive services, this overhead matters. The modern alternative: **Istio ambient mesh** (no sidecar) reduces resource overhead significantly.
-
----
-
-### Q67 — Linux / Bash | Scenario-Based | Advanced
-
-> You suspect a **disk I/O bottleneck** causing intermittent latency spikes on a production server. Walk through the Linux commands and tools to confirm and diagnose it.
-
-📁 **Reference:** `nawab312/DSA` → `Linux` — I/O monitoring, iostat, iotop sections
-
-#### Key Points to Cover:
-```
-Step 1 — Quick check (is I/O the issue?):
-  top   # look at: %wa (iowait column)
-        # iowait > 20% = CPU waiting for I/O = strong signal
-
-  vmstat 1 5
-  # Look at: wa column (iowait), b (blocked processes)
-  # wa consistently > 10 = I/O saturation
-
-Step 2 — Identify which disk:
-  iostat -xz 1 5
-  # Key columns:
-  # %util = device utilization (>80% = saturated)
-  # await = avg I/O wait time in ms (>10ms = problematic)
-  # svctm = service time (hardware speed)
-  # r/s, w/s = reads/writes per second
-  # rkB/s, wkB/s = throughput
-
-  # Example problematic output:
-  # Device  r/s   w/s  rkB/s  wkB/s  await  %util
-  # nvme0n1 0.0  250.0   0.0  2000.0  95.3   99.8
-  # %util=99.8 = disk completely saturated
-
-Step 3 — Identify which PROCESS is causing I/O:
-  iotop -o -P
-  # -o = only show processes doing I/O
-  # -P = show processes not threads
-  # Shows: TID, PRIO, USER, DISK READ, DISK WRITE, SWAPIN, IO%, COMMAND
-
-  # Alternative: pidstat -d 1
-  pidstat -d 1 5
-  # Shows per-process disk read/write rates
-
-Step 4 — Identify which FILES are being accessed:
-  lsof | grep <pid-from-iotop>
-  # Shows which files the heavy I/O process has open
-
-  # For real-time file access:
-  inotifywait -r /path/to/watch
-  strace -p <pid> -e trace=read,write,open -c   # syscall I/O summary
-
-Step 5 — Check for swap I/O (memory pressure causing disk I/O):
-  free -h
-  vmstat 1 | grep -v 0    # look at si/so columns (swap in/out)
-  # If si/so non-zero = system is swapping = memory problem not disk
-
-Step 6 — Check disk queue depth:
-  cat /sys/block/nvme0n1/queue/nr_requests  # current queue depth
-  iostat -x | grep -E "aqu-sz|avgqu-sz"    # average queue size
-  # High queue = disk can't keep up with requests
-
-Common fixes:
-  → Write I/O: check for excessive log writes, use async writes
-  → Read I/O: add caching layer (Redis, ElastiCache)
-  → Swap I/O: increase RAM or reduce memory pressure
-  → Both: upgrade to faster disk (gp2 → gp3, io1 for IOPS guarantee)
-  → Check: noatime mount option (eliminates atime update writes)
-```
-
-> 💡 **Interview tip:** The diagnostic hierarchy: `top %wa` → `vmstat wa` → `iostat %util` → `iotop` → `lsof`. Each step narrows the problem: `%wa` confirms I/O is the issue, `iostat` shows which disk, `iotop` shows which process, `lsof` shows which files. The **`iostat %util`** column is the key saturation indicator — 100% means the disk has zero idle time and cannot keep up with requests. On cloud (EBS), also check the EBS CloudWatch metrics — `BurstBalance` dropping to 0 on `gp2` volumes is a common cause of sudden I/O degradation that `iostat` alone won't explain.
-
----
-
-### Q68 — Terraform | Scenario-Based | Advanced
-
-> Your company is moving from **manually managed AWS infrastructure** to Terraform. Hundreds of resources exist in AWS created manually via the console. How would you import all existing infrastructure without downtime or disruptions?
-
-📁 **Reference:** `nawab312/Terraform` — `terraform import`, state management sections
-
-#### Key Points to Cover:
-```
-Strategy: Gradual import with zero risk
-
-Phase 1 — Inventory existing resources:
-  # Use AWS Config or Tag Editor to list all resources
-  aws resourcegroupstaggingapi get-resources \
-    --output json | jq -r '.ResourceTagMappingList[].ResourceARN'
-
-Phase 2 — Write Terraform configuration FIRST:
-  # Must write the .tf resource block BEFORE importing
-  # Otherwise import has nothing to put state into
-
-  resource "aws_s3_bucket" "logs" {
-    bucket = "company-logs-bucket"
-    # Don't add attributes yet — keep minimal
-    # After import, run plan to see actual values, add to config
-  }
-
-Phase 3 — Import resource into state:
-  terraform import aws_s3_bucket.logs company-logs-bucket
-  # Reads current state from AWS → writes to terraform.tfstate
-
-Phase 4 — Generate config from state (TF 1.5+ import blocks):
-  # Modern approach — add import block to .tf file:
-  import {
-    id = "company-logs-bucket"
-    to = aws_s3_bucket.logs
-  }
-  # Then run:
-  terraform plan -generate-config-out=generated.tf
-  # Terraform generates the resource block automatically!
-  # Review generated.tf, clean up, add to your config
-
-Phase 5 — Run terraform plan — should show NO changes:
-  terraform plan
-  # Goal: "No changes. Infrastructure is up-to-date."
-  # If changes shown: AWS config doesn't match your .tf file
-  # Fix .tf to match AWS (not the other way — AWS is the truth)
-
-Phase 6 — Handle computed/ignored attributes:
-  resource "aws_security_group" "web" {
-    name = "web-sg"
-    lifecycle {
-      ignore_changes = [description]  # set by AWS, can't change
-    }
-  }
-
-Prioritize import order:
-  1. Foundation: VPCs, Subnets, Route Tables, IGW
-  2. Security: Security Groups, IAM Roles
-  3. Compute: EC2, ASGs, Launch Templates
-  4. Data: RDS, ElastiCache, S3
-  5. App: EKS, ECS, Lambda
-
-Tools to speed up import:
-  # terraformer: auto-generates .tf + imports (bulk)
-  terraformer import aws --resources=s3,ec2 --regions=us-east-1
-
-  # AWS provider import blocks (TF 1.5+): batch imports in .tf file
-  # Atlantis or Terraform Cloud: run imports via PR review process
-
-Risks to mitigate:
-  → Never run terraform apply mid-import (partial state = dangerous)
-  → Test in dev account first before prod
-  → Use -refresh=false flag during import runs (performance)
-  → Keep existing tagging (Terraform will manage from now on)
-```
-
-> 💡 **Interview tip:** The most important point: **write the `.tf` config before running `terraform import`** — import only updates the state file, it does NOT generate config. Without a matching resource block, import fails. Terraform 1.5+ `import blocks` + `plan -generate-config-out` changed this — now Terraform can generate the config automatically. Mention **terraformer** as the bulk import tool — it introspects AWS and generates both the .tf config AND import commands for entire services. For large accounts, this cuts import effort from weeks to hours.
-
----
-
-### Q69 — AWS | Conceptual | Advanced
-
-> Explain the difference between **AWS ALB** and **AWS NLB**. When would you choose each? Explain **target groups** and how **health checks** work differently.
-
-📁 **Reference:** `nawab312/AWS` — ALB, NLB, Load Balancing sections
-
-#### Key Points to Cover:
-```
-ALB (Application Load Balancer) — Layer 7:
-  → HTTP/HTTPS/gRPC/WebSocket aware
-  → Routes based on: URL path, host header, HTTP method, query params
-  → Terminates TLS (decrypts HTTPS, inspects headers, re-encrypts)
-  → Integrates with: WAF, Cognito auth, Lambda targets
-  → Static IP: NOT natively (use Global Accelerator)
-  → Preserves: X-Forwarded-For header
-
-  Use ALB for:
-  ✅ Web apps, REST APIs, microservices
-  ✅ Path-based routing (/api/* → service-a, /* → service-b)
-  ✅ Host-based routing (api.company.com vs www.company.com)
-  ✅ Authentication (Cognito/OIDC at load balancer level)
-  ✅ WebSocket applications
-
-NLB (Network Load Balancer) — Layer 4:
-  → TCP/UDP/TLS — no HTTP awareness
-  → Extremely high performance: millions of RPS, ultra-low latency
-  → Preserves source IP (ALB changes source IP to its own)
-  → Static IP per AZ (important for whitelisting)
-  → Faster failover: seconds (ALB takes 30-60s to detect failures)
-  → Supports: TCP_UDP, TCP passthrough (end-to-end TLS)
-
-  Use NLB for:
-  ✅ TCP/UDP protocols (non-HTTP): gaming, IoT, streaming
-  ✅ Static IP requirement (firewall whitelisting)
-  ✅ Extreme low latency requirements (<1ms overhead)
-  ✅ Preserving source IP (NLB passes through, ALB doesn't)
-  ✅ VPC endpoint services (PrivateLink — requires NLB)
-
-Target Groups:
-  → Define WHERE to route traffic (EC2, IP, Lambda, ALB)
-  → ALB listener → rules → target group
-  → One TG can have: EC2 + Fargate tasks + Lambda mixed
-  → Target type: instance, ip, lambda, alb
-
-Health Check differences:
-  ALB health checks:
-    → HTTP/HTTPS: sends actual GET request to path
-    → Checks HTTP status code (200-399 = healthy)
-    → More configurable: path, headers, matcher
-    Protocol: HTTP, Path: /health, Matcher: 200-299
-
-  NLB health checks:
-    → TCP: just establishes connection (port open = healthy)
-    → OR HTTP: similar to ALB
-    → TCP health check: faster, less overhead
-    → No HTTP inspection in TCP mode
-
-ALB vs NLB quick decision:
-  HTTP/HTTPS web app?          → ALB
-  Need path-based routing?     → ALB
-  Need WAF integration?        → ALB
-  TCP/UDP non-HTTP protocol?   → NLB
-  Need static IP?              → NLB
-  Preserving source IP needed? → NLB
-  PrivateLink service?         → NLB (required)
-```
-
-> 💡 **Interview tip:** The most commonly confused difference: **source IP preservation**. With ALB, the target instance sees the ALB's IP as the source (original IP in X-Forwarded-For header). With NLB, the target sees the client's actual IP directly. This matters for: IP-based rate limiting (needs real IP), security group rules (restrict by client IP), compliance logging (need real client IP in logs). Also: **NLB is required for AWS PrivateLink** — this is an important EKS pattern where you expose K8s services to other VPCs/accounts via PrivateLink.
-
----
-
-### Q70 — Kubernetes | Troubleshooting | Advanced
-
-> Pods are being **evicted frequently** even though `kubectl top nodes` shows available resources. What are the possible reasons and how do you investigate and stop them?
-
-📁 **Reference:** `nawab312/Kubernetes` → `06_SCHEDULING_RESOURCE_MANAGEMENT.md`
-
-#### Key Points to Cover:
-```
-Step 1 — Check eviction reason:
-  kubectl describe pod <evicted-pod>
-  # Look for: "The node was low on resource: memory/disk/inodes/pid"
-  # Message shows exactly which resource triggered eviction
-
-  kubectl get events --field-selector reason=Evicted -A
-  kubectl get events --sort-by='.lastTimestamp' | grep Evict | tail -20
-
-Step 2 — Understand why "available" resources != true availability:
-  kubectl top nodes          # shows requests, not limits
-  kubectl describe node      # shows allocatable vs actual usage
-
-  # The gap:
-  # Node has 8Gi RAM, 4Gi is "available" per kubectl top
-  # But: kubelet has reserved 1Gi (--kube-reserved)
-  # OS processes using 1Gi more
-  # Real allocatable: 6Gi, real available: 2Gi
-
-Eviction types:
-  Soft eviction:
-    → Usage above soft threshold for grace period
-    → Graceful pod termination
-    → Thresholds: memory.available<1Gi (evict if below 1Gi for 2 min)
-
-  Hard eviction (immediate):
-    → Usage above hard threshold (critical)
-    → Immediate SIGKILL — no grace period
-    → Thresholds: memory.available<100Mi (immediate kill)
-
-Common causes of unexpected evictions:
-
-1. Disk pressure (most common surprise):
-   df -h on node  # is / or /var/lib/kubelet full?
-   → Container logs filling /var/log
-   → Old images not cleaned up
-   Fix: docker image prune, log rotation, increase disk
-
-2. Inode exhaustion:
-   df -i  # disk usage 30% but inodes 100%
-   → Many small files (temp files, log fragments)
-   Fix: find and delete many small files
-
-3. Memory limits not set (BestEffort pods evicted first):
-   # Pods with no requests/limits = BestEffort QoS
-   # First to be evicted when node is under pressure
-   Fix: add requests and limits to ALL pods
-
-4. Node reserved resources not accounting:
-   # kubelet reserves: --kube-reserved, --system-reserved
-   # These reduce allocatable memory
-   kubectl describe node | grep Allocatable -A 10
-
-5. Memory request vs actual usage mismatch:
-   # Pod requests 100Mi but uses 900Mi
-   # Scheduler thinks node has capacity → schedules → OOM → eviction
-   Fix: set requests accurately based on actual usage (VPA recommendation)
-
-Stop evictions:
-  → Set accurate resource requests (match actual p99 usage)
-  → Set limits = 2x requests (burst room)
-  → Configure LimitRange for namespace defaults
-  → Monitor: node memory/disk pressure before evictions start
-  → Alert: kube_node_status_condition{condition="MemoryPressure"}==1
-```
-
-> 💡 **Interview tip:** The `kubectl top nodes` trap: it shows **requests** scheduled on the node, not **actual usage**. A node can show 60% used by `kubectl top` while being at 99% actual memory usage because pods are using far more than their requests. This is why `kubectl describe node` (which shows actual kubelet-reported usage) and `prometheus node_memory_MemAvailable_bytes` are more accurate than `kubectl top`. The fix: **set accurate resource requests** — this makes the scheduler's decisions accurate, preventing the false sense of available capacity.
-
----
-
-### Q71 — Grafana | Scenario-Based | Advanced
-
-> Build a Grafana dashboard that shows the **SLO** for your API: 99.9% availability and 95% of requests under 500ms. Write the **PromQL queries** for each SLO and explain how you would set up an **error budget** panel.
-
-📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Grafana`, `Prometheus`
-
-#### Key Points to Cover:
-```
-SLO Definitions:
-  Availability SLO: 99.9% = max 0.1% error rate = 43.2 min downtime/month
-  Latency SLO: 95% of requests complete in under 500ms
-
-PromQL for Availability SLO:
-  # Current error rate (last 30 days rolling):
-  1 - (
-    sum(rate(http_requests_total{status!~"5.."}[30d]))
-    / sum(rate(http_requests_total[30d]))
-  )
-
-  # Current availability (should be >= 0.999):
-  sum(rate(http_requests_total{status!~"5.."}[30d]))
-  / sum(rate(http_requests_total[30d]))
-
-PromQL for Latency SLO:
-  # % of requests within 500ms (last 1 hour):
-  sum(rate(http_request_duration_seconds_bucket{le="0.5"}[1h]))
-  / sum(rate(http_request_duration_seconds_count[1h]))
-  # Should be >= 0.95
-
-Error Budget Calculation:
-  Error budget = allowed errors over time period
-  For 99.9% SLO over 30 days:
-    Budget = 1 - 0.999 = 0.1% = 43.2 minutes
-
-  Budget consumed:
-  1 - (
-    (sum(rate(http_requests_total{status!~"5.."}[30d]))
-     / sum(rate(http_requests_total[30d])))
-    / 0.999  # divide by SLO target
-  )
-  # Returns: 0.0 = no budget consumed, 1.0 = all budget consumed
-
-  Budget remaining (in minutes for 30 days):
-  (
-    1 - (
-      sum(increase(http_requests_total{status=~"5.."}[30d]))
-      / sum(increase(http_requests_total[30d]))
-    ) / (1 - 0.999)
-  ) * 43.2  # 43.2 minutes = full budget
-
-Grafana Dashboard panels:
-  Panel 1 (Stat): Current Availability %
-    → threshold: green >= 99.9%, yellow >= 99%, red < 99%
-    → value: availability query
-  
-  Panel 2 (Gauge): Error Budget Remaining
-    → 0-100% gauge
-    → green > 50%, yellow 10-50%, red < 10%
-  
-  Panel 3 (Time Series): Availability over 30 days
-    → rolling window query
-    → reference line at 99.9%
-  
-  Panel 4 (Stat): Budget Burn Rate
-    → How fast is budget being consumed?
-    → > 1x = consuming budget at SLO rate (neutral)
-    → > 10x = need immediate action
-
-Alert thresholds:
-  Fast burn: budget_burn_rate > 14.4 for 1h (will exhaust in ~3 days)
-  Slow burn: budget_burn_rate > 3 for 6h (will exhaust in 30 days)
-```
-
-> 💡 **Interview tip:** The **error budget concept** is what distinguishes SRE thinking from traditional ops. Error budget = "how much unreliability you're allowed." If your SLO is 99.9% and you've used 50% of your error budget in week 1, you need to slow down deployments or focus on reliability. If you end the month with 100% budget remaining, you might be being too conservative — ship more features. The budget burn rate alert pattern (fast burn + slow burn) catches both "fire right now" (fast burn, 14.4x) and "slow leak that will cause problems" (slow burn, 3x) scenarios.
-
----
-
-### Q72 — Python | Scenario-Based | Advanced
-
-> Write a Python script that: reads EC2 instance IDs from CSV, uses **boto3** to get state/type/tags for each, outputs a **formatted table** with Instance ID, State, Type, Name tag, Environment tag, and handles **API errors and rate limiting** gracefully.
-
-📁 **Reference:** `nawab312/DSA` → `Python` — boto3, CSV handling, error handling sections
-
-#### Key Points to Cover:
-```python
-#!/usr/bin/env python3
-import boto3
-import csv
-import sys
-import time
-from botocore.exceptions import ClientError, EndpointConnectionError
-from tabulate import tabulate
-
-def get_instance_info(ec2_client, instance_id, max_retries=3):
-    """Get EC2 instance info with retry on rate limiting."""
-    for attempt in range(max_retries):
-        try:
-            response = ec2_client.describe_instances(
-                InstanceIds=[instance_id]
-            )
-            reservations = response.get('Reservations', [])
-            if not reservations:
-                return None
-
-            instance = reservations[0]['Instances'][0]
-
-            # Extract tags as dict:
-            tags = {
-                tag['Key']: tag['Value']
-                for tag in instance.get('Tags', [])
-            }
-
-            return {
-                'Instance ID': instance_id,
-                'State':       instance['State']['Name'],
-                'Type':        instance['InstanceType'],
-                'Name':        tags.get('Name', 'N/A'),
-                'Environment': tags.get('Environment', 'N/A'),
-            }
-
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-
-            if error_code == 'RequestLimitExceeded':
-                # Exponential backoff on rate limiting:
-                wait_time = (2 ** attempt) + 1
-                print(f"Rate limited. Waiting {wait_time}s...",
-                      file=sys.stderr)
-                time.sleep(wait_time)
-                continue
-
-            elif error_code == 'InvalidInstanceID.NotFound':
-                print(f"Warning: Instance {instance_id} not found",
-                      file=sys.stderr)
-                return None
-
-            else:
-                print(f"AWS error for {instance_id}: {e}",
-                      file=sys.stderr)
-                return None
-
-    print(f"Error: Max retries exceeded for {instance_id}",
-          file=sys.stderr)
-    return None
-
-
-def read_instance_ids(csv_file):
-    """Read instance IDs from CSV file."""
-    instance_ids = []
-    try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            # Support both 'instance_id' and 'InstanceId' columns:
-            for row in reader:
-                iid = row.get('instance_id') or row.get('InstanceId')
-                if iid and iid.strip():
-                    instance_ids.append(iid.strip())
-    except FileNotFoundError:
-        print(f"Error: File '{csv_file}' not found", file=sys.stderr)
-        sys.exit(1)
-    return instance_ids
-
-
-def main():
-    csv_file = sys.argv[1] if len(sys.argv) > 1 else 'instances.csv'
-    region = sys.argv[2] if len(sys.argv) > 2 else 'us-east-1'
-
-    instance_ids = read_instance_ids(csv_file)
-    if not instance_ids:
-        print("No instance IDs found in CSV", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Fetching info for {len(instance_ids)} instances in {region}...")
-
-    try:
-        ec2 = boto3.client('ec2', region_name=region)
-    except EndpointConnectionError as e:
-        print(f"Cannot connect to AWS: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    results = []
-    for iid in instance_ids:
-        info = get_instance_info(ec2, iid)
-        if info:
-            results.append(info)
-
-    if results:
-        print("\n" + tabulate(results, headers='keys', tablefmt='grid'))
-        print(f"\nTotal: {len(results)} instances")
-    else:
-        print("No results found")
-
-
-if __name__ == '__main__':
-    main()
-```
-
-> 💡 **Interview tip:** Three things elevate this script: (1) **Exponential backoff** for rate limiting — `2^attempt + 1` gives 3s, 5s, 9s waits between retries, which is the AWS-recommended pattern. (2) **Tag extraction as dict** with `{tag['Key']: tag['Value']}` — more Pythonic and handles missing tags gracefully with `.get('Name', 'N/A')`. (3) **Separating concerns** into functions — `read_instance_ids` and `get_instance_info` are independently testable. Also mention using **`boto3` session + batch `describe_instances`** with multiple IDs in one call (up to 100 per call) instead of looping — this is 100x faster for large CSV files.
-
----
-
-### Q73 — Jenkins | Troubleshooting | Advanced
-
-> Jenkins master is **running out of disk space** on `/var/lib/jenkins`. Pipelines are failing with disk-related errors. What is consuming disk and how do you clean it up and prevent recurrence?
-
-📁 **Reference:** `nawab312/CI_CD` → `Jenkins` — maintenance and cleanup sections
-
-#### Key Points to Cover:
-```
-Step 1 — Find what's consuming space:
-  du -sh /var/lib/jenkins/* | sort -rh | head -20
-  # Typical offenders:
-  # /var/lib/jenkins/jobs         ← build logs and artifacts (usually biggest)
-  # /var/lib/jenkins/workspace    ← build workspaces (checked out code)
-  # /var/lib/jenkins/plugins      ← Jenkins plugins
-  # /var/lib/jenkins/caches       ← Maven/Gradle/npm caches
-
-Step 2 — Find largest individual builds:
-  du -sh /var/lib/jenkins/jobs/*/builds/* | sort -rh | head -20
-  find /var/lib/jenkins/jobs -name "*.log" -size +100M
-
-Step 3 — Immediate cleanup:
-  # Clean workspaces for all jobs (safe, code re-checked-out on next build):
-  # In Jenkins UI: Job → Workspace → Wipe out workspace
-  # Via script console (Manage Jenkins → Script Console):
-  Jenkins.instance.getAllItems(Job.class).each { job ->
-    job.builds.each { build -> build.delete() }
-  }
-
-  # Clean old build artifacts and logs:
-  find /var/lib/jenkins/jobs -name "archive" -type d \
-    -mtime +30 -exec rm -rf {} +
-  find /var/lib/jenkins/jobs -name "*.log" -mtime +30 -delete
-
-Step 4 — Configure automatic build retention per job:
-  # In Jenkinsfile:
-  options {
-    buildDiscarder(logRotator(
-      numToKeepStr: '10',        // keep only last 10 builds
-      artifactNumToKeepStr: '5', // keep artifacts from last 5 builds
-      daysToKeepStr: '30',       // delete builds older than 30 days
-      artifactDaysToKeepStr: '7' // delete artifacts older than 7 days
-    ))
-  }
-
-  # In job config UI: Discard old builds → Days to keep / Max # of builds
-
-Step 5 — Configure Global Build Discard (Manage Jenkins → System):
-  # Global default for all jobs without their own settings
-
-Step 6 — Move artifacts to external storage:
-  # Instead of storing in Jenkins: push to S3, Nexus, Artifactory
-  archiveArtifacts artifacts: '*.jar'     # stores in Jenkins (bad for disk)
-  # Better:
-  sh 'aws s3 cp target/*.jar s3://artifacts-bucket/builds/'
-
-Step 7 — Workspace cleanup plugin:
-  post {
-    always {
-      cleanWs()  // clean workspace after every build
-    }
-  }
-
-Step 8 — Monitor disk:
-  # Add CloudWatch alarm on Jenkins EC2:
-  # DiskSpaceUtilization > 80% → alert → before it's critical
-```
-
-> 💡 **Interview tip:** The **`buildDiscarder` option** in Jenkinsfile is the most important preventive measure — every single pipeline should have it. The default in Jenkins is to keep ALL builds forever, which means disk fills up over months as builds accumulate. `numToKeepStr: '10'` keeps the last 10 builds and their logs. `artifactNumToKeepStr: '5'` keeps artifacts from only the last 5 builds (artifacts are usually much larger than logs). Also mention **moving artifacts out of Jenkins entirely** — Jenkins disk should only store logs, not build artifacts. Nexus/Artifactory/S3 are purpose-built for artifact storage with proper retention policies.
-
----
-
-### Q74 — Kubernetes | Conceptual | Advanced
-
-> Explain **Kubernetes Pod QoS classes** — Guaranteed, Burstable, and BestEffort. How does Kubernetes decide which class a Pod belongs to? What is the **eviction order** when a node runs out of memory?
-
-📁 **Reference:** `nawab312/Kubernetes` → `06_SCHEDULING_RESOURCE_MANAGEMENT.md`
-
-#### Key Points to Cover:
-```
-QoS Classes — determined by resource requests/limits:
-
-Guaranteed (highest priority, never evicted unless OOM):
-  Requirements:
-    → EVERY container must have memory AND cpu requests AND limits
-    → requests MUST EQUAL limits (exact same value)
-
-  containers:
-  - resources:
-      requests:
-        memory: "512Mi"
-        cpu: "500m"
-      limits:
-        memory: "512Mi"    # same as request
-        cpu: "500m"        # same as request
-  → System knows exactly what this pod needs — predictable
-
-Burstable (medium priority, evicted when node under pressure):
-  Requirements:
-    → At least one container has requests OR limits set
-    → requests != limits (can burst above request up to limit)
-
-  containers:
-  - resources:
-      requests:
-        memory: "256Mi"   # can use up to 512Mi
-      limits:
-        memory: "512Mi"
-  → Can use more than requested, but might be evicted
-
-BestEffort (lowest priority, first to be evicted):
-  Requirements:
-    → NO containers have any requests or limits set
-
-  containers:
-  - name: app
-    image: myapp
-    # No resources section at all
-  → Gets whatever is leftover — evicted first
-
-Eviction order (node memory pressure):
-  1. BestEffort pods evicted first (they have no guarantees)
-  2. Burstable pods using most above their request (sorted by excess)
-  3. Burstable pods with less excess
-  4. Guaranteed pods (only as last resort — OOM kill)
-
-OOM Score:
-  Linux kernel assigns oom_score_adj to each process
-  Kubernetes sets:
-    BestEffort:   oom_score_adj = 1000 (killed first)
-    Burstable:    oom_score_adj = 2-999 (proportional to excess)
-    Guaranteed:   oom_score_adj = -997 (killed last)
-
-Practical implications:
-  Critical services (databases, API servers): use Guaranteed QoS
-  → Set requests = limits
-  → Protected from eviction
-
-  Stateless workers, jobs: Burstable is fine
-  → Set requests at normal usage, limit at burst
-
-  NEVER run without resource requests in production:
-  → BestEffort = first evicted = unreliable
-```
-
-> 💡 **Interview tip:** The surprising Guaranteed QoS rule: **requests must EQUAL limits**. Many engineers set `requests: 256Mi, limits: 512Mi` thinking they're being conservative — but this makes the pod Burstable (eviction candidate), not Guaranteed. For critical workloads, setting `requests == limits` is worth the slight resource "waste" — it gives the pod eviction protection. The tradeoff: Guaranteed pods can't burst above their limit, so size them at peak usage, not average usage. Use `kubectl get pod <name> -o yaml | grep qosClass` to verify the QoS class assigned.
-
----
-
-### Q75 — AWS | Scenario-Based | Advanced
-
-> A security audit finds some S3 buckets are **publicly accessible** and some have **no encryption**. How do you audit all S3 buckets across your account, fix them, and prevent this from happening again using automation?
-
-📁 **Reference:** `nawab312/AWS` — S3 security, AWS Config, IAM policies sections
-
-#### Key Points to Cover:
-```
-Step 1 — Audit all buckets:
-  # List all buckets:
-  aws s3api list-buckets --query 'Buckets[].Name' --output text
-
-  # Check each bucket for public access:
-  for bucket in $(aws s3api list-buckets --query 'Buckets[].Name' --output text); do
-    public=$(aws s3api get-public-access-block \
-      --bucket "$bucket" \
-      --query 'PublicAccessBlockConfiguration' \
-      --output text 2>/dev/null || echo "NO_CONFIG")
-    
-    acl=$(aws s3api get-bucket-acl \
-      --bucket "$bucket" \
-      --query 'Grants[?Grantee.URI==`http://acs.amazonaws.com/groups/global/AllUsers`]' \
-      --output text)
-    
-    echo "Bucket: $bucket | PublicBlock: $public | PublicACL: $acl"
-  done
-
-  # Check encryption:
-  aws s3api get-bucket-encryption --bucket my-bucket 2>&1
-
-Step 2 — Fix: Block public access on all buckets:
-  # Account-level block (blocks ALL buckets):
-  aws s3control put-public-access-block \
-    --account-id $(aws sts get-caller-identity --query Account --output text) \
-    --public-access-block-configuration \
-      BlockPublicAcls=true,IgnorePublicAcls=true,\
-      BlockPublicPolicy=true,RestrictPublicBuckets=true
-
-  # Per-bucket fix:
-  aws s3api put-public-access-block \
-    --bucket my-bucket \
-    --public-access-block-configuration \
-      BlockPublicAcls=true,IgnorePublicAcls=true,\
-      BlockPublicPolicy=true,RestrictPublicBuckets=true
-
-Step 3 — Fix: Enable encryption on all buckets:
-  for bucket in $(aws s3api list-buckets --query 'Buckets[].Name' --output text); do
-    aws s3api put-bucket-encryption \
-      --bucket "$bucket" \
-      --server-side-encryption-configuration '{
-        "Rules": [{
-          "ApplyServerSideEncryptionByDefault": {
-            "SSEAlgorithm": "aws:kms",
-            "KMSMasterKeyID": "arn:aws:kms:us-east-1:123:key/xxx"
-          },
-          "BucketKeyEnabled": true
-        }]
-      }'
-  done
-
-Step 4 — Prevent recurrence:
-
-  a) AWS Config Rules (continuous compliance monitoring):
-     → s3-bucket-public-read-prohibited (auto-detect public buckets)
-     → s3-bucket-server-side-encryption-enabled
-     → Config remediation: auto-fix when rule violated
-
-  b) AWS Organizations Service Control Policy (SCP):
-     # Block all S3 public access at organization level:
-     {
-       "Effect": "Deny",
-       "Action": "s3:PutBucketPublicAccessBlock",
-       "Resource": "*",
-       "Condition": {
-         "StringEquals": {
-           "s3:PublicAccessBlockConfiguration/BlockPublicAcls": "false"
-         }
-       }
-     }
-
-  c) Terraform enforce in IaC:
-     resource "aws_s3_bucket_public_access_block" "all" {
-       bucket = aws_s3_bucket.main.id
-       block_public_acls       = true
-       block_public_policy     = true
-       ignore_public_acls      = true
-       restrict_public_buckets = true
-     }
-
-  d) Checkov in CI/CD: fails if S3 bucket missing public access block
-```
-
-> 💡 **Interview tip:** The **account-level S3 Block Public Access** setting is the fastest fix — one command blocks public access for every bucket in the account, including any future buckets created. This is the first thing to check in any AWS account setup. For ongoing prevention, the layered approach is: (1) account-level block (catches everything immediately), (2) AWS Config rules (continuous monitoring + alert if someone disables it), (3) SCP (blocks the API call at the org level — even account admins can't re-enable public access). SCPs are the strongest control — they can't be overridden even by account root.
-
----
-
-### Q76 — Linux / Bash | Conceptual | Advanced
-
-> Explain the Linux **`/proc` filesystem**. Give **5 practical examples** of how a DevOps/SRE engineer would use `/proc` to diagnose production issues, with exact file paths and what they reveal.
-
-📁 **Reference:** `nawab312/DSA` → `Linux` — `/proc` filesystem sections
-
-#### Key Points to Cover:
-```
-What /proc is:
-  → Virtual filesystem — not on disk, generated by kernel at read time
-  → Window into kernel and process information
-  → Every read returns current live data
-  → Zero disk space used (kernel generates content on access)
-
-5 practical examples:
-
-1. Investigate why a process is slow (open files/connections):
-   /proc/<PID>/fd/       → all open file descriptors (symlinks to actual files)
-   ls -la /proc/1234/fd/ # shows all open files, sockets, pipes
-   /proc/<PID>/fdinfo/   → file descriptor details (position, flags)
-   
-   "Why is nginx serving stale content?"
-   ls -la /proc/$(pgrep nginx)/fd | grep access.log
-   # Reveals if nginx has stale file descriptor to rotated log
-
-2. Check memory pressure before OOM:
-   /proc/meminfo         → detailed memory breakdown
-   cat /proc/meminfo | grep -E "MemAvailable|SwapFree|Dirty|Writeback"
-   # MemAvailable: what's actually free (not just "free" - includes reclaimable)
-   # Dirty: data written to page cache but not yet to disk
-   # High Dirty + low MemAvailable = about to OOM
-
-3. Find what's in a process's memory:
-   /proc/<PID>/maps      → virtual memory map (what libraries loaded)
-   /proc/<PID>/smaps     → detailed memory per mapping with RSS
-   cat /proc/1234/smaps | grep -A 10 "heap"
-   # Shows exactly how much heap a Java/Python process is using
-
-4. Diagnose network connection issues:
-   /proc/net/tcp         → all TCP connections with hex state codes
-   /proc/net/tcp6        → IPv6 TCP connections
-   /proc/net/sockstat    → socket usage summary
-   cat /proc/net/sockstat
-   # TCP: inuse 450 orphan 2 tw 120 alloc 452 mem 85
-   # High "tw" = many TIME_WAIT connections
-   # High "orphan" = connection leak (sockets not properly closed)
-
-5. Tune kernel parameters without reboot:
-   /proc/sys/             → live kernel parameters (same as sysctl)
-   /proc/sys/vm/swappiness       → swap aggressiveness (0-100)
-   /proc/sys/net/ipv4/ip_local_port_range → ephemeral port range
-   
-   echo "10" > /proc/sys/vm/swappiness   # immediate effect, no restart
-   # Use sysctl for permanent changes, /proc/sys for immediate testing
-   
-   # Kubernetes requirement:
-   cat /proc/sys/net/bridge/bridge-nf-call-iptables  # must be 1
-
-Bonus — process environment variables:
-   /proc/<PID>/environ   → null-separated env vars of running process
-   cat /proc/$(pgrep java)/environ | tr '\0' '\n' | grep DATABASE
-   # "What DATABASE_URL is the running app actually using?"
-   # Very useful when you suspect env var injection failed
-```
-
-> 💡 **Interview tip:** The **`/proc/<PID>/environ`** trick is one of the most practical SRE debugging tools — when a process is misbehaving and you suspect it's using the wrong environment variable, you can read the exact env vars it was started with. Unlike `env` or `printenv` (which show current shell's vars), `/proc/environ` shows the ACTUAL env vars the process received at startup. This catches issues like: "the process was started before the new secret was injected" or "the K8s secret wasn't updated before rollout." Also: `/proc/sys` changes are immediate but not persistent — always test with `/proc/sys` first, then make permanent with `sysctl -w` and `/etc/sysctl.conf`.
-
----
-
-### Q77 — ArgoCD | Conceptual | Advanced
-
-> Explain the difference between **ArgoCD** and **Flux** as GitOps tools. Also explain what **ApplicationSets** are in ArgoCD and give a real-world example of when to use them over individual Applications.
-
-📁 **Reference:** `nawab312/CI_CD` → `ArgoCD` — ApplicationSets sections
-
-#### Key Points to Cover:
-```
-ArgoCD vs Flux:
-
-ArgoCD:
-  → GUI-first: excellent web UI for visualization and manual operations
-  → App of Apps, ApplicationSets for managing many apps
-  → Single repository of Application CRDs
-  → Push-based sync model (Argo "pulls" from Git but has a sync engine)
-  → Sync waves for ordering deployments
-  → Better for: teams needing visibility, manual approvals, multi-cluster UI
-  → CNCF graduated project
-
-Flux:
-  → CLI-first: designed for fully automated GitOps (less UI)
-  → Helm Controller, Kustomize Controller as separate controllers
-  → Better Helm OCI support (early adopter)
-  → More "GitOps pure" — everything is a K8s controller
-  → Notification Controller, Image Automation Controller
-  → Better for: platform teams wanting fully automated, minimal UI needed
-  → CNCF graduated project
-
-Choose ArgoCD when:
-  → Need web UI for visibility + manual sync control
-  → Teams need to see deployment status visually
-  → Multi-cluster with central management
-  → App of Apps / ApplicationSets for many services
-
-Choose Flux when:
-  → Fully automated, no human in the loop
-  → Already using Helm extensively (Helm Controller is excellent)
-  → Want pure K8s controller model
-  → Smaller team, less need for UI
-
-ApplicationSets:
-  Problem: 20 microservices × 3 environments = 60 ArgoCD Application CRDs
-  Managing 60 individual Application YAMLs = toil
-
-  Solution: ApplicationSet = template that generates multiple Applications
-
-  # Generator types:
-  1. List generator (explicit list):
-  spec:
-    generators:
-    - list:
-        elements:
-        - service: payment
-          namespace: payment-prod
-        - service: auth
-          namespace: auth-prod
-    template:
-      metadata:
-        name: '{{service}}-prod'
-      spec:
-        source:
-          path: 'apps/{{service}}'
-        destination:
-          namespace: '{{namespace}}'
-
-  2. Git generator (discovers from Git directory structure):
-  spec:
-    generators:
-    - git:
-        repoURL: https://github.com/org/gitops-repo
-        revision: HEAD
-        directories:
-        - path: 'apps/*'   # discovers all directories under apps/
-    template:
-      metadata:
-        name: '{{path.basename}}'  # directory name = app name
-      spec:
-        source:
-          path: '{{path}}'
-
-  3. Cluster generator (deploy to all/some clusters):
-  spec:
-    generators:
-    - clusters:
-        selector:
-          matchLabels:
-            environment: production
-    template:
-      metadata:
-        name: 'myapp-{{name}}'  # name = cluster name
-      spec:
-        destination:
-          server: '{{server}}'  # cluster API URL
-
-  Real-world use: 
-  Deploy same monitoring stack (Prometheus, Grafana, Loki) to 10 clusters
-  → One ApplicationSet with cluster generator → 10 Applications created auto
-  → New cluster added with label → Application created automatically
-```
-
-> 💡 **Interview tip:** **ApplicationSet is the most scalable ArgoCD pattern** — the difference between managing 60 YAML files manually vs one template. The **Git directory generator** is particularly powerful: you add a new directory `apps/new-service/` to your Git repo, and ArgoCD automatically creates a new Application for it. Zero manual Application creation. Also mention that **Flux and ArgoCD can coexist** — some teams use Flux for infrastructure (Terraform controllers, cert-manager) and ArgoCD for application deployments. This isn't unusual in mature organizations.
-
----
-
-### Q78 — Terraform | Conceptual | Advanced
-
-> What are Terraform **`depends_on`**, **`lifecycle`**, and **`provisioner`** blocks? When would you use each? Are there cases where you should **avoid** them?
-
-📁 **Reference:** `nawab312/Terraform` — resource lifecycle, dependencies, provisioners sections
-
-#### Key Points to Cover:
-```
-depends_on (explicit dependency):
-  → Forces Terraform to create/destroy resources in specific order
-  → Normally: Terraform infers dependencies from references
-  → Use when: dependency isn't expressed through attribute reference
-
-  resource "aws_iam_role_policy" "app_policy" { ... }
-
-  resource "aws_ecs_service" "app" {
-    depends_on = [aws_iam_role_policy.app_policy]
-    # ECS service needs the policy to exist first
-    # But there's no direct attribute reference → Terraform can't infer
-  }
-
-  When to avoid:
-  ✅ Use when hidden dependencies exist
-  ❌ Don't use to fix errors — usually a sign of missing reference
-  ❌ Overuse creates fragile ordering that breaks on changes
-
-lifecycle block:
-  → Controls resource creation, update, and destruction behavior
-
-  resource "aws_db_instance" "prod" {
-    lifecycle {
-      create_before_destroy = true
-      # Default: destroy old → create new (downtime)
-      # With flag: create new → switch → destroy old (zero downtime)
-      # Use for: RDS, ALB target groups, EC2 instances
-
-      prevent_destroy = true
-      # terraform plan FAILS if this resource would be destroyed
-      # Use for: production databases, critical data stores
-
-      ignore_changes = [
-        tags["LastModified"],    # ignore auto-set AWS tags
-        engine_version,          # ignore RDS auto minor upgrades
-        desired_count,           # ignore ECS autoscaling changes
-      ]
-      # Use when: external systems modify attributes Terraform manages
-
-      replace_triggered_by = [   # TF 1.2+
-        aws_launch_template.app.latest_version
-        # Force replace when launch template changes
-      ]
-    }
-  }
-
-  When to avoid lifecycle:
-  ❌ ignore_changes = all (hides all drift — very dangerous)
-  ❌ prevent_destroy in dev (blocks cleanup)
-
-provisioner block:
-  → Runs commands on local machine or remote resource
-  → local-exec: runs on machine executing Terraform
-  → remote-exec: runs via SSH on created resource
-
-  resource "aws_instance" "web" {
-    provisioner "local-exec" {
-      command = "ansible-playbook -i '${self.public_ip},' site.yml"
-    }
-    provisioner "remote-exec" {
-      connection { type = "ssh"; host = self.public_ip }
-      inline = ["sudo apt-get update", "sudo apt-get install -y nginx"]
-    }
-  }
-
-  When to AVOID (HashiCorp recommendation):
-  ❌ Provisioners are last resort — prefer:
-     → cloud-init/user_data for EC2 bootstrapping
-     → Custom AMIs with Packer (bake config in)
-     → AWS Systems Manager for post-deploy config
-     → Ansible run separately after Terraform
-
-  Problems with provisioners:
-  → Run only at creation (not on config changes)
-  → Failures leave resource in unknown state (tainted)
-  → remote-exec requires SSH (security concern)
-  → Not idempotent (fails on second run)
-```
-
-> 💡 **Interview tip:** The strong interview answer on provisioners: **"Provisioners are a code smell in Terraform — their presence usually means you need Packer, user_data, or a separate configuration management tool."** HashiCorp says this explicitly in their docs. The only valid use cases: calling an external API that has no Terraform provider, running a one-time migration script. For everything else: user_data scripts for EC2 bootstrapping, AMIs built with Packer, AWS SSM for ongoing config management.
-
----
-
-### Q79 — Kubernetes | Scenario-Based | Advanced
-
-> Your batch processing system on Kubernetes processes millions of records nightly. Currently uses a Deployment but you're experiencing: failed jobs leaving no trace, no retry on failure, can't track completion. **How would you redesign using the right workload type?**
-
-📁 **Reference:** `nawab312/Kubernetes` → `02_WORKLOADS.md` — Jobs and CronJobs sections
-
-#### Key Points to Cover:
-```
-Problem with Deployment for batch:
-  → Deployment designed for long-running services (never "done")
-  → Failed pod → restarted forever (no failure tracking)
-  → No concept of "job completed successfully"
-  → No parallelism control
-  → No automatic cleanup
-
-Solution: Kubernetes Job
-
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: nightly-processor-2024-01-15
-spec:
-  completions: 1000         # total work units to complete
-  parallelism: 50           # run 50 pods simultaneously
-  completionMode: Indexed   # each pod gets unique index (0-999)
-  backoffLimit: 3           # retry failed pods up to 3 times
-  activeDeadlineSeconds: 7200  # kill if running > 2 hours
-
-  ttlSecondsAfterFinished: 86400  # auto-delete job after 24 hours
-
-  template:
-    spec:
-      restartPolicy: OnFailure  # retry on fail (not Never for batch)
-      containers:
-      - name: processor
-        image: myapp-processor:v1.2.3
-        env:
-        - name: JOB_COMPLETION_INDEX  # index from completionMode
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
-        resources:
-          requests: { cpu: "500m", memory: "512Mi" }
-          limits:   { cpu: "1000m", memory: "1Gi" }
-
-Schedule with CronJob:
-  apiVersion: batch/v1
-  kind: CronJob
-  metadata:
-    name: nightly-processor
-  spec:
-    schedule: "0 2 * * *"        # 2am every night
-    concurrencyPolicy: Forbid    # don't run if previous still running
-    successfulJobsHistoryLimit: 3
-    failedJobsHistoryLimit: 5
-    startingDeadlineSeconds: 3600  # skip if can't start within 1 hour
-    jobTemplate:
-      spec:
-        # ... same as Job spec above ...
-
-Monitor job progress:
-  kubectl get jobs
-  kubectl describe job nightly-processor-2024-01-15
-  # Shows: Succeeded: 750/1000, Failed: 3, Active: 47
-
-Handle large data with indexed completion:
-  # Each pod processes its slice:
-  # Pod 0 processes records 0-999
-  # Pod 1 processes records 1000-1999
-  # etc.
-  BATCH_START=$((JOB_COMPLETION_INDEX * 1000))
-  BATCH_END=$(((JOB_COMPLETION_INDEX + 1) * 1000 - 1))
-  process_records $BATCH_START $BATCH_END
-
-Failure handling:
-  backoffLimit: 3           # try 3 times per pod
-  restartPolicy: OnFailure  # restart same pod on failure
-  # OR:
-  restartPolicy: Never      # create new pod on failure (for debugging)
-  # With Never: failed pods stay around for log inspection
-```
-
-> 💡 **Interview tip:** The **Indexed Job** pattern (completionMode: Indexed) is the modern Kubernetes approach for parallel batch processing — each pod knows exactly which chunk of work it should process via `JOB_COMPLETION_INDEX`. This eliminates the need for a work queue (SQS, Redis) for simple parallel jobs. The `backoffLimit` vs `activeDeadlineSeconds` distinction is important: `backoffLimit` controls individual pod retry count, `activeDeadlineSeconds` is the absolute time budget for the entire job (kills everything after N seconds regardless of progress). For nightly batch jobs, always set `activeDeadlineSeconds` — otherwise a stuck job blocks the next night's run.
-
----
-
-### Q80 — AWS | Troubleshooting | Advanced
-
-> Your **AWS Lambda function** times out in production but works fine in dev. It calls an RDS database and an external API. Timeout is set to 30 seconds but sometimes runs the full 30 seconds. Walk through your investigation.
-
-📁 **Reference:** `nawab312/AWS` — Lambda, RDS, VPC, CloudWatch Logs Insights sections
-
-#### Key Points to Cover:
-```
-Step 1 — Lambda in VPC vs not in VPC:
-  # First question: is the Lambda in a VPC?
-  aws lambda get-function-configuration --function-name my-fn \
-    --query 'VpcConfig'
-  
-  Lambda NOT in VPC:
-    → Cannot access RDS in private subnet (connection refused immediately)
-    → Dev might not have VPC = works, Prod has VPC = connectivity issue
-  
-  Lambda IN VPC:
-    → Needs ENI (Elastic Network Interface) — cold start adds 1-3 seconds
-    → Must be in subnets with route to RDS security group
-    → Outbound to external API needs: NAT Gateway (private subnet) or public subnet
-
-Step 2 — Check cold start vs warm execution:
-  # In CloudWatch Logs, look for "Init Duration" in REPORT line:
-  # REPORT Duration: 28500ms  Billed: 28500ms  Init Duration: 2500ms
-  # Init Duration present = cold start (Lambda container just created)
-  # Cold start in VPC with RDS: ENI creation adds 1-3 seconds extra
-
-Step 3 — Identify where time is spent:
-  # Add timing logs to Lambda:
-  import time, logging
-  logger = logging.getLogger()
-  
-  def handler(event, context):
-      t0 = time.time()
-      # DB connection:
-      conn = get_db_connection()
-      logger.info(f"DB connect time: {time.time()-t0:.3f}s")
-      
-      t1 = time.time()
-      result = conn.execute(query)
-      logger.info(f"DB query time: {time.time()-t1:.3f}s")
-      
-      t2 = time.time()
-      api_result = call_external_api()
-      logger.info(f"API call time: {time.time()-t2:.3f}s")
-  
-  # CloudWatch Logs Insights query:
-  fields @timestamp, @message
-  | filter @message like "time:"
-  | parse @message "* time: *s" as operation, duration
-  | stats avg(duration) by operation
-
-Step 4 — Common Lambda timeout root causes:
-  a) DB connection NOT reused between invocations:
-     # Wrong: create new connection in handler (every cold start)
-     def handler(event, context):
-         conn = psycopg2.connect(...)  # NEW connection every time
-     
-     # Right: connection outside handler (reused on warm start)
-     conn = psycopg2.connect(DATABASE_URL)  # at module level
-     def handler(event, context):
-         cursor = conn.cursor()  # reuses connection
-
-  b) RDS max connections exhausted:
-     # Lambda scales to 1000 concurrent = 1000 DB connections
-     # RDS db.t3.micro max_connections = 66
-     # Fix: RDS Proxy (connection pooling for Lambda)
-
-  c) External API slow or down:
-     # Add timeout to external API calls:
-     requests.get(url, timeout=5)  # fail fast, not wait 30 seconds
-
-  d) Lambda function running in wrong subnet:
-     # Private subnet without NAT → external API calls hang
-     # Check: route table has 0.0.0.0/0 → NAT Gateway
-
-  e) DNS resolution slow in VPC:
-     # Use endpoint IPs, not DNS for internal calls
-     # Or configure Route53 Resolver
-
-Step 5 — Fixes:
-  → RDS Proxy: reduces connections, handles pool
-  → Connection reuse: move DB init to module level
-  → Timeouts on all external calls
-  → Lambda Powertools: structured logging + metrics
-  → Increase memory (also increases CPU proportionally)
-```
-
-> 💡 **Interview tip:** The **Lambda + RDS connection exhaustion** problem is the most common Lambda production issue. Lambda can scale to thousands of concurrent executions, each trying to open a database connection. RDS only allows a limited number of connections (based on instance size). Solution: **RDS Proxy** — it pools connections between Lambda and RDS, so 1000 Lambda invocations might only need 50 actual RDS connections. This is now the standard architecture for Lambda + RDS. Also: connection reuse at module level is a critical Lambda optimization — cold starts are unavoidable but re-creating DB connections on every warm invocation is wasteful and slow.
-
----
-
-### Q81 — ELK Stack | Conceptual | Advanced
-
-> Explain how **Elasticsearch indexing** works internally. What are **shards** and **replicas** and how do they affect performance and availability? If you have 5 primary shards and 1 replica on a 3-node cluster, what happens when one node goes down?
-
-📁 **Reference:** `nawab312/Monitoring-and-Observability` → `ELK_Stack`
-
-#### Key Points to Cover:
-```
-How Elasticsearch indexing works:
-  1. Document received by any node (coordinator)
-  2. Coordinator determines which primary shard owns this document
-     → Shard = hash(document_id) % number_of_primary_shards
-  3. Request routed to node holding that primary shard
-  4. Document written to shard (Lucene inverted index)
-  5. Changes written to translog (durability before flush)
-  6. Replicated to replica shards (async by default)
-  7. Acknowledged to client when primary + configured replicas confirm
-
-Shards:
-  → Elasticsearch index = collection of shards
-  → Shard = self-contained Lucene index
-  → Primary shard: accepts writes
-  → Replica shard: copy of primary (read load + HA)
-  → Shards distributed across nodes automatically
-
-  Setting shards at index creation (can't change without reindex):
-  PUT /my-index
-  {
-    "settings": {
-      "number_of_shards": 5,
-      "number_of_replicas": 1
-    }
-  }
-
-Performance impact:
-  More shards:
-  → Parallelism: searches split across shards (faster)
-  → BUT: more overhead per shard (each shard = JVM overhead)
-  → Rule of thumb: shard size 10-50GB, max 200 shards per node
-
-  More replicas:
-  → Better read throughput (read from any replica)
-  → Higher storage cost (each replica = full data copy)
-  → Slower writes (must replicate to all replicas)
-
-Availability impact:
-  → primary_shards: 5, replicas: 1 → 10 total shards across 3 nodes
-
-  Normal state (3 nodes):
-    Node 1: P0, P1, R2, R3
-    Node 2: P2, P3, R0, R4
-    Node 3: P4, R1, R2, R3
-  (Elasticsearch distributes to balance)
-
-  One node goes down (e.g., Node 1 fails):
-    → P0 and P1 are GONE (primary shards on Node 1)
-    → Elasticsearch PROMOTES R0 and R1 to primary (on Node 2 and 3)
-    → Cluster temporarily YELLOW (primaries ok, replicas now missing)
-    → Cluster status: YELLOW (not RED — all primaries are assigned)
-    → If you had 0 replicas → R0 and R1 don't exist → RED
-
-  Recovery when Node 1 comes back:
-    → Shards re-assigned from current primaries
-    → Cluster returns to GREEN
-
-Two nodes go down simultaneously:
-  → Some primary shards may be lost with no replica
-  → Cluster becomes RED (unassigned primaries)
-  → Prevention: replicas >= 2 for critical data
-```
-
-> 💡 **Interview tip:** The interview question "what happens when a node goes down?" tests whether you understand the **replica promotion** mechanism. The answer: with replicas, the cluster goes YELLOW (degraded but functional), not RED. YELLOW means all primaries are assigned (data accessible) but some replicas are missing. RED means at least one PRIMARY is unassigned (data for that shard is inaccessible). The key operational rule: **never run production Elasticsearch with `number_of_replicas: 0`** — one node failure makes cluster RED and that data is gone until the node recovers.
-
----
-
-### Q82 — GitHub Actions | Troubleshooting | Advanced
-
-> Your GitHub Actions workflow passes locally (act) but fails in GitHub with `EACCES: permission denied, open '/github/workspace/output.json'`. Another workflow is passing but taking 45 minutes instead of 5 minutes. Diagnose and fix both issues.
-
-📁 **Reference:** `nawab312/CI_CD` → `GithubActions` — runner permissions, caching sections
-
-#### Key Points to Cover:
-```
-Issue 1 — Permission denied: /github/workspace/output.json
-
-Root cause investigation:
-  # GitHub Actions runners run as non-root user
-  # Act locally might run as root (different behavior)
-
-  # Check runner user:
-  - run: whoami && id
-  # Shows: runner, uid=1001
-
-  # Check workspace permissions:
-  - run: ls -la /github/workspace/
-
-Common causes:
-  a) Previous step creates file as root (via sudo or privileged container):
-     # File owned by root, runner can't write
-     # Fix: don't run steps as root, or fix permissions:
-     - run: sudo chown -R $USER:$USER /github/workspace/
-
-  b) Docker container in job writes file as root:
-     # Inside Docker container, process runs as root by default
-     # Files created = owned by root
-     # Fix: add user to Dockerfile:
-     USER 1001  # match GitHub Actions runner UID
-
-  c) Mount permissions in act:
-     # act uses Docker mounts — different UID mapping than GitHub
-     # Fix: test with --container-daemon-socket to match behavior
-
-  d) Output file path doesn't exist:
-     # Output directory not created before write
-     - run: mkdir -p $(dirname output.json) && command > output.json
-
-  Fix:
-  - name: Fix permissions
-    run: |
-      mkdir -p /github/workspace
-      # OR use GITHUB_WORKSPACE env var:
-      echo "data" > $GITHUB_WORKSPACE/output.json
-
-Issue 2 — Workflow taking 45 minutes instead of 5:
-
-Step 1 — Identify slow step:
-  # Look at step timing in GitHub Actions UI (each step shows duration)
-  # OR add timing:
-  - run: |
-      time npm ci          # how long is dependency install?
-      time npm run build   # how long is build?
-
-Common causes of slow workflows:
-
-  a) No dependency caching:
-     # npm ci downloads all packages every run (5-10 min each run)
-     # Fix: add caching:
-     - uses: actions/cache@v4
-       with:
-         path: ~/.npm
-         key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
-         restore-keys: ${{ runner.os }}-npm-
-     - run: npm ci
-
-  b) No Docker layer caching:
-     # Docker builds rebuild all layers every run
-     # Fix: BuildKit cache:
-     - uses: docker/setup-buildx-action@v3
-     - uses: docker/build-push-action@v5
-       with:
-         cache-from: type=gha
-         cache-to: type=gha,mode=max
-
-  c) Sequential jobs that could be parallel:
-     # Unit tests, lint, security scan all run one after another
-     # Fix: run as parallel jobs (default in GitHub Actions)
-
-  d) Test suite running serially:
-     # Fix: --runInBand removed, use Jest --maxWorkers=4
-     # Or: split tests across matrix
-
-  e) Downloading large artifacts between jobs:
-     # Fix: build Docker image once, push to registry
-     # Next job pulls from registry (cached layers)
-
-  f) Wrong runner type:
-     # ubuntu-latest may be slower than specific version
-     # Fix: use ubuntu-22.04 for consistency
-```
-
-> 💡 **Interview tip:** The permission issue is almost always **root vs non-root user mismatch**. GitHub Actions runners use UID 1001 (non-root). If any step in your workflow runs as root (via `sudo`, privileged Docker container, or certain actions), files it creates are owned by root and subsequent non-root steps can't write to them. The 45-minute workflow is almost always **missing npm/pip/Docker layer caching** — adding `actions/cache` with the right key transforms a 10-minute dependency install into a 30-second cache restore. The cache key using `hashFiles('package-lock.json')` is critical — it invalidates the cache when dependencies change, ensuring you get fresh packages when needed.
-
----
-
-### Q83 — Kubernetes | Conceptual | Advanced
-
-> Explain **PodDisruptionBudget (PDB)**. What problem does it solve? Write a PDB for a 5-replica deployment requiring at least 3 running. What happens during a **node drain** if PDB cannot be satisfied?
-
-📁 **Reference:** `nawab312/Kubernetes` → `09_CLUSTER_OPERATIONS.md`
-
-#### Key Points to Cover:
-```
-What PDB solves:
-  Without PDB: cluster operations (node drain, cluster upgrade) can
-  evict ALL pods of a deployment simultaneously
-  → service downtime during planned maintenance
-
-  With PDB: Kubernetes guarantees minimum availability during
-  voluntary disruptions (not crashes — voluntary evictions only)
-
-PDB for 5-replica deployment:
-  apiVersion: policy/v1
-  kind: PodDisruptionBudget
-  metadata:
-    name: payment-service-pdb
-    namespace: production
-  spec:
-    minAvailable: 3        # always keep at least 3 running
-    selector:
-      matchLabels:
-        app: payment-service
-
-  # OR equivalently:
-  spec:
-    maxUnavailable: 2      # at most 2 can be unavailable simultaneously
-    # minAvailable: 3  ≡  maxUnavailable: 2 for 5 replicas
-
-  # Use percentage:
-  spec:
-    minAvailable: "60%"    # 60% of replicas must be available
-    # For 5 replicas: 60% = 3 pods minimum
-
-Voluntary vs Involuntary disruptions:
-  PDB protects against VOLUNTARY:
-  ✅ kubectl drain (node maintenance)
-  ✅ Rolling update (new deployment)
-  ✅ Cluster autoscaler (node removal)
-  ✅ kubectl delete pod
-
-  PDB does NOT protect against INVOLUNTARY:
-  ❌ Node crash (hardware failure)
-  ❌ OOM kill
-  ❌ Kernel panic
-
-Node drain with PDB:
-  kubectl drain node-1 --ignore-daemonsets
-
-  Scenario: 5 pods, PDB minAvailable=3, pods on 3 nodes
-  Node-1 has 3 pods, Node-2 has 1, Node-3 has 1
-
-  Step 1: Drain starts — tries to evict pods from Node-1
-  Step 2: Evict pod-1 from Node-1 → 4 pods running (>= 3 ✅) → allowed
-  Step 3: Evict pod-2 from Node-1 → 3 pods running (= 3 ✅) → allowed
-  Step 4: Evict pod-3 from Node-1 → 2 pods running (< 3 ❌) → BLOCKED
-  → Drain WAITS for pod-3 to be replaced before proceeding
-  → Kubernetes schedules pod-3 on another node
-  → Once 4th pod running → drain evicts pod-3 from Node-1
-  → Drain completes with zero service disruption
-
-When PDB cannot be satisfied (stuck drain):
-  Scenario: Only 3 pods exist, PDB minAvailable=3
-  → No pods can be evicted (evicting any = drops below minimum)
-  → kubectl drain hangs indefinitely
-  
-  Solutions:
-  # Option 1: Override PDB (dangerous — may cause downtime):
-  kubectl drain node-1 --ignore-daemonsets --disable-eviction
-  # Option 2: Temporarily change PDB:
-  kubectl patch pdb payment-pdb --type='json' \
-    -p='[{"op":"replace","path":"/spec/minAvailable","value":2}]'
-  # Option 3: Scale up first:
-  kubectl scale deployment payment-service --replicas=6
-  # Then drain → then scale back to 5
-```
-
-> 💡 **Interview tip:** PDB is the **safety net for cluster operations** — without it, a `kubectl drain` during node maintenance can take down all replicas if they happen to be on one node. Always create PDBs for stateless services with `minAvailable: n-1` or `maxUnavailable: 1`. The common mistake: setting `minAvailable` equal to the total replicas (`minAvailable: 5` for 5 replicas) — this makes draining impossible (can never evict any pod). The correct pattern: `minAvailable: ⌈replicas * 0.6⌉` — allow 40% to be disrupted at once.
-
----
-
-### Q84 — Prometheus + Grafana | Scenario-Based | Advanced
-
-> Implement **SLO monitoring** for a payment service: 99.95% availability over 30 days, 99% of requests under 200ms. Alert when error budget is 50% consumed and when burn rate is too fast. Write **Prometheus alerting rules** with **multi-window, multi-burn-rate** approach.
-
-📁 **Reference:** `nawab312/Monitoring-and-Observability` → `Prometheus`, `Grafana`
-
-#### Key Points to Cover:
-```yaml
-# Recording rules (pre-compute for efficiency):
-groups:
-- name: slo_recording_rules
-  rules:
-  # Error rate over different windows:
-  - record: job:http_errors:rate5m
-    expr: sum(rate(http_requests_total{status=~"5..",job="payment"}[5m]))
-          / sum(rate(http_requests_total{job="payment"}[5m]))
-  
-  - record: job:http_errors:rate1h
-    expr: sum(rate(http_requests_total{status=~"5..",job="payment"}[1h]))
-          / sum(rate(http_requests_total{job="payment"}[1h]))
-
-  - record: job:http_errors:rate6h
-    expr: sum(rate(http_requests_total{status=~"5..",job="payment"}[6h]))
-          / sum(rate(http_requests_total{job="payment"}[6h]))
-
-  - record: job:http_errors:rate3d
-    expr: sum(rate(http_requests_total{status=~"5..",job="payment"}[3d]))
-          / sum(rate(http_requests_total{job="payment"}[3d]))
-
-# Multi-window, multi-burn-rate alerts:
-- name: slo_alerts
-  rules:
-  # CRITICAL: Fast burn — 99.95% SLO
-  # 14.4x burn rate = uses 1 hour of budget in 5 minutes
-  # If this continues, 3-day budget exhausted
-  - alert: PaymentSLO_FastBurn_Critical
-    expr: |
-      (job:http_errors:rate5m > (14.4 * 0.0005))
-      and
-      (job:http_errors:rate1h > (14.4 * 0.0005))
-    for: 2m
-    labels:
-      severity: critical
-      slo: payment_availability
-    annotations:
-      summary: "Payment SLO fast burn - CRITICAL"
-      description: |
-        Error rate {{ $value | humanizePercentage }} - burning budget
-        14.4x faster than allowed. Action required immediately.
-
-  # HIGH: Slow burn — budget will be exhausted in 3 days
-  - alert: PaymentSLO_SlowBurn_High
-    expr: |
-      (job:http_errors:rate1h > (6 * 0.0005))
-      and
-      (job:http_errors:rate6h > (6 * 0.0005))
-    for: 15m
-    labels:
-      severity: high
-    annotations:
-      summary: "Payment SLO slow burn - HIGH"
-      description: "Error rate elevated, budget will exhaust in ~5 days"
-
-  # WARNING: 50% of monthly error budget consumed
-  - alert: PaymentSLO_BudgetHalfConsumed
-    expr: |
-      1 - (
-        sum(rate(http_requests_total{status!~"5..",job="payment"}[30d]))
-        / sum(rate(http_requests_total{job="payment"}[30d]))
-      ) > 0.5 * 0.0005
-    labels:
-      severity: warning
-    annotations:
-      summary: "50% of monthly error budget consumed"
-
-  # Latency SLO: 99% under 200ms
-  - alert: PaymentLatencySLO_Burn
-    expr: |
-      histogram_quantile(0.99,
-        sum by(le)(rate(http_request_duration_seconds_bucket{job="payment"}[5m]))
-      ) > 0.200
-    for: 5m
-    labels:
-      severity: high
-    annotations:
-      summary: "Payment p99 latency SLO breach"
-      description: "p99 latency {{ $value }}s > 200ms SLO target"
-```
-
-```
-Multi-window, multi-burn-rate explained:
-  Why two windows (5m AND 1h)?
-  → Single short window: too noisy (triggers on brief spikes)
-  → Single long window: too slow to alert (major outage runs 30 min)
-  → Two windows: short confirms it's happening NOW, long confirms it's sustained
-
-  Burn rate calculation for 99.95% SLO:
-  Error budget = 1 - 0.9995 = 0.0005 (0.05%)
-  14.4x burn rate means: consuming budget 14.4x faster than allowed
-  At this rate, 30-day budget exhausted in 30/14.4 = ~2 days
-  → CRITICAL: wake someone up NOW
-
-  6x burn rate: 30/6 = 5 days to exhaust
-  → HIGH: fix within hours
-```
-
-> 💡 **Interview tip:** The **multi-window multi-burn-rate (MWMBR) approach** is from the Google SRE Workbook and is the production-standard SLO alerting pattern. The key insight: a single error rate threshold generates too many false positives (noisy) or misses real problems (too conservative). By requiring BOTH a short window (5m) AND a longer window (1h) to exceed the threshold, you get: fast detection (5m catches it immediately) + confirmation it's sustained (1h ensures it's not a 10-second blip). The burn rate multiplier is calculated: `(1 - SLO) * burn_rate_multiplier` gives you the error rate threshold. For 99.95% + 14.4x = `0.0005 * 14.4 = 0.0072` = 0.72% error rate.
-
----
-
-### Q85 — AWS | Conceptual | Advanced
-
-> Explain **AWS IAM roles, policies, and permission boundaries**. What is the difference between **identity-based** and **resource-based policies**? How does **AWS STS cross-account access** work using IAM roles?
-
-📁 **Reference:** `nawab312/AWS` — IAM, STS, cross-account access sections
-
-#### Key Points to Cover:
-```
-IAM Roles:
-  → Identity that can be ASSUMED (not logged into)
-  → Used by: EC2, Lambda, ECS tasks, users from other accounts
-  → Provides: temporary credentials (15 min to 12 hours)
-  → Trust policy: WHO can assume this role
-  → Permission policy: WHAT the role can do
-
-Identity-based policies (attached to user/role/group):
-  → Define what actions the IDENTITY can perform
-  → Attached to: IAM users, groups, roles
-  → Effect: Allow or Deny
-
-  {
-    "Effect": "Allow",
-    "Action": ["s3:GetObject", "s3:PutObject"],
-    "Resource": "arn:aws:s3:::my-bucket/*"
-  }
-
-Resource-based policies (attached to resource):
-  → Define who CAN ACCESS the resource
-  → Attached to: S3 buckets, SQS queues, SNS topics, KMS keys, Lambda
-  → Must specify Principal (who is allowed)
-
-  # S3 bucket policy (resource-based):
-  {
-    "Effect": "Allow",
-    "Principal": {"AWS": "arn:aws:iam::123456789012:role/MyRole"},
-    "Action": "s3:GetObject",
-    "Resource": "arn:aws:s3:::my-bucket/*"
-  }
-
-Key difference:
-  Identity policy: "I (the user/role) can do X"
-  Resource policy: "This resource allows identity Y to do X"
-  
-  For cross-account: need BOTH (identity policy in source account
-  + resource policy/trust policy in target account)
-
-Permission Boundaries:
-  → Sets MAXIMUM permissions a role can ever have
-  → Even if policies grant more, boundary limits the effective permissions
-  → Use case: allow developers to create roles but prevent privilege escalation
-
-  # Boundary allows only S3 and EC2:
-  resource "aws_iam_role" "dev_role" {
-    permissions_boundary = "arn:aws:iam::123:policy/DeveloperBoundary"
-    # Even if dev_role has AdministratorAccess policy attached,
-    # actual permissions limited to what DeveloperBoundary allows
-  }
-
-Cross-Account Access with STS:
-  Account A (Dev): wants to access Account B (Prod) S3
-  
-  Step 1: In Account B — create role with trust policy:
-  {
-    "Effect": "Allow",
-    "Principal": {"AWS": "arn:aws:iam::DEV_ACCOUNT_ID:root"},
-    "Action": "sts:AssumeRole"
-  }
-
-  Step 2: In Account A — user/role calls AssumeRole:
-  aws sts assume-role \
-    --role-arn "arn:aws:iam::PROD_ACCOUNT_ID:role/CrossAccountRole" \
-    --role-session-name "dev-accessing-prod"
-  # Returns: AccessKeyId, SecretAccessKey, SessionToken (12-hour max)
-
-  Step 3: Use temporary credentials:
-  export AWS_ACCESS_KEY_ID=ASIA...
-  export AWS_SECRET_ACCESS_KEY=...
-  export AWS_SESSION_TOKEN=...
-  aws s3 ls s3://prod-bucket  # works with prod credentials
-
-  In code (SDK handles automatically):
-  sts = boto3.client('sts')
-  creds = sts.assume_role(
-      RoleArn='arn:aws:iam::PROD:role/CrossAccountRole',
-      RoleSessionName='dev-session'
-  )['Credentials']
-  
-  s3 = boto3.client('s3',
-      aws_access_key_id=creds['AccessKeyId'],
-      aws_secret_access_key=creds['SecretAccessKey'],
-      aws_session_token=creds['SessionToken']
-  )
-```
-
-> 💡 **Interview tip:** The **effective permissions** question: if an IAM user has `s3:*` in identity policy but the S3 bucket policy denies `s3:DeleteObject`, what happens? **The Deny wins** — IAM evaluation logic: explicit Deny always overrides Allow. The evaluation order: Organization SCP → Resource policy → Identity policy → Permission boundary → Session policy. Any explicit Deny at any level = denied. For cross-account: you need both the identity in Account A to have permission to call `sts:AssumeRole` AND the role in Account B must trust Account A. Missing either = access denied.
-
----
-
-### Q86 — Linux / Bash | Troubleshooting | Advanced
-
-> A production server is experiencing **random kernel OOM kills** even though `free -h` shows available memory. Explain what the **OOM killer** is, how it decides which process to kill, and how to **tune it** and **prevent critical processes from being killed**.
-
-📁 **Reference:** `nawab312/DSA` → `Linux` — memory management, OOM killer sections
-
-#### Key Points to Cover:
-```
-What OOM killer is:
-  → Linux kernel mechanism that kills processes when memory is exhausted
-  → Triggered: system runs out of physical + swap memory
-  → Goal: free enough memory to continue operating
-  → Alternative to panic: killing one process > crashing whole system
-
-Why "free -h shows available memory" but OOM still fires:
-  1. Memory fragmentation:
-     → Plenty of free pages but not contiguous (huge pages need contiguous)
-     → OOM can fire even with ~5% free memory
-
-  2. Memory cgroups (container limits):
-     → Container has its own memory limit (512Mi)
-     → OOM fires when CONTAINER limit hit, not system limit
-     → System might have 8GB free, container OOM at 512Mi
-
-  3. Memory overcommit:
-     → Linux default: allows allocating more memory than available
-     → /proc/sys/vm/overcommit_memory = 0 (default heuristic overcommit)
-     → Process allocates, then actually uses (demand paging)
-     → If too many processes try to use allocated memory = OOM
-
-How OOM killer chooses victim (oom_score):
-  oom_score = 0-1000 (higher = more likely to be killed)
-  
-  Based on:
-  → Memory usage % of total system memory
-  → Process age (newer processes scored higher)
-  → Child process memory included in parent's score
-
-  # Check OOM score of process:
-  cat /proc/<PID>/oom_score
-  
-  # OOM score adjustment (oom_score_adj):
-  cat /proc/<PID>/oom_score_adj
-  # Range: -1000 to 1000
-  # -1000 = never kill (OOM killer ignores this process)
-  # +1000 = kill first
-
-Protect critical processes:
-  # Method 1: oom_score_adj (temporary, for this process run):
-  echo -1000 > /proc/$(pgrep postgres)/oom_score_adj
-  # postgres will NEVER be killed by OOM
-
-  # Method 2: oom_score_adj persistent (set before process starts):
-  # In systemd service:
-  [Service]
-  OOMScoreAdjust=-900    # -1000 = never kill, use -900 for critical
-
-  # Java app service file:
-  [Service]
-  ExecStart=/usr/bin/java -jar app.jar
-  OOMScoreAdjust=-900
-
-  # Method 3: In Kubernetes (set for pod):
-  spec:
-    containers:
-    - name: critical-app
+    # Spot first, On-Demand fallback:
+    requirements:
+    - key: karpenter.sh/capacity-type
+      operator: In
+      values: ["spot", "on-demand"]
+    - key: kubernetes.io/arch
+      operator: In
+      values: [amd64, arm64]   # Graviton for cost savings
+    - key: karpenter.k8s.aws/instance-category
+      operator: In
+      values: [m, c, r]        # flexible instance families
+
+    # Bin packing (pack tightly, fewer nodes):
+    consolidation:
+      enabled: true             # merge underutilized nodes
+    ttlSecondsAfterEmpty: 30    # remove empty nodes quickly
+
+    limits:
       resources:
-        requests:
-          memory: "512Mi"
-        limits:
-          memory: "512Mi"   # Guaranteed QoS = oom_score_adj=-997
+        cpu: 1000               # max 1000 vCPUs total
+        memory: 4000Gi
 
-Diagnose OOM events:
-  # Check kernel logs for OOM events:
-  dmesg | grep -i "oom\|killed process"
-  journalctl -k | grep -i "oom\|out of memory"
+  apiVersion: karpenter.k8s.aws/v1alpha1
+  kind: AWSNodeTemplate
+  spec:
+    subnetSelector:
+      karpenter.sh/discovery: my-cluster
+    securityGroupSelector:
+      karpenter.sh/discovery: my-cluster
+    instanceProfile: KarpenterNodeInstanceProfile
+
+KEDA for event-driven scaling:
+  # Scale based on HTTP traffic:
+  apiVersion: keda.sh/v1alpha1
+  kind: ScaledObject
+  spec:
+    scaleTargetRef:
+      name: api-deployment
+    minReplicaCount: 0           # scale to ZERO at night
+    maxReplicaCount: 100
+    triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        metricName: http_requests_total
+        threshold: "10"          # 10 req/s per pod
+        query: sum(rate(http_requests_total[1m]))
+
+  # Scale to zero at night (KEDA inactive period):
+    advanced:
+      horizontalPodAutoscalerConfig:
+        behavior:
+          scaleDown:
+            stabilizationWindowSeconds: 300  # wait 5 min before scale down
+
+Cluster sleep schedule (kube-downscaler):
+  # Scale ALL deployments to 0 during off-hours:
+  kubectl annotate deploy --all -n production \
+    downscaler/downtime="Mon-Fri 20:00-08:00 UTC" \
+    downscaler/uptime="Mon-Fri 08:00-20:00 UTC"
+
+  # Protects critical services:
+  kubectl annotate deploy critical-service \
+    downscaler/exclude=true
+
+VPA for right-sizing (with Goldilocks):
+  # VPA in Off mode (recommendations only, Goldilocks reads them):
+  apiVersion: autoscaling.k8s.io/v1
+  kind: VerticalPodAutoscaler
+  spec:
+    updatePolicy:
+      updateMode: "Off"    # don't auto-apply
+    # Read recommendations from Goldilocks dashboard
+
+Spot interruption handling:
+  # AWS Node Termination Handler (NTH):
+  helm install aws-node-termination-handler \
+    eks/aws-node-termination-handler \
+    --set enableSpotInterruptionDraining=true \
+    --set enableRebalanceMonitoring=true
+
+  # NTH watches: EC2 Spot 2-minute warning → cordon node → drain pods
+  # Pods must: have PodDisruptionBudget + terminationGracePeriod
+
+Startup time optimization (< 2 minutes for morning spike):
+  # Karpenter pre-provisioning (warm pool):
+  spec:
+    limits.resources.cpu: 100   # keep some capacity warm
+    # OR: use On-Demand for baseline (1-2 nodes always running)
+    # Spot for burst (add within 2 min)
+
+  # KEDA scale-up speed:
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0  # no warmup wait for scale up
+          policies:
+          - type: Percent
+            value: 200           # double pods every 15 seconds
+            periodSeconds: 15
+
+Cost savings estimate (typical startup):
+  Without optimization:     100 nodes × 24h × $0.20/h = $480/day
+  With Spot (70% discount): $144/day
+  With scale-to-zero nights: 14h sleep × 60% savings = $101/day
+  Total: ~79% cost reduction vs always-on On-Demand
+```
+
+> 💡 **Interview tip:** The **scale-to-zero + Karpenter consolidation** combination is the most impactful cost optimization for startups with 8-12 hours of daily usage. The key insight: Karpenter's `consolidation: true` doesn't just remove empty nodes — it actively bin-packs running pods onto fewer nodes and terminates the emptied nodes. A cluster running 10 half-full nodes gets consolidated to 5 full nodes, cutting compute cost by 50% during business hours. For the 2-minute startup SLA: keep 1-2 On-Demand baseline nodes always running (fast pod scheduling) and let Karpenter handle the Spot burst (2-3 min provisioning for additional nodes).
+
+---
+
+### Q450 — All Topics | System Design | Advanced
+
+> You are the **founding SRE** at a Series B startup (50 engineers, 20 microservices, $2M/month AWS bill). Design your **complete 12-month platform roadmap** enabling: 10+ deploys/day, MTTR under 10 minutes, costs growing at half the business rate, zero infra security incidents, new engineers productive in 1 week.
+
+📁 **Reference:** All repositories — complete SRE platform roadmap
+
+#### Key Points to Cover:
+```
+MONTHS 1-3: FOUNDATION (Stop the bleeding)
+
+  Priority: Visibility + Stability
   
-  # dmesg output shows:
-  # [123456.789] Out of memory: Kill process 1234 (java) score 842
-  # Killed process 1234 (java) total-vm:2048000kB, anon-rss:1024000kB
+  Week 1-2: Assess current state:
+  → Audit: AWS spend by service (Cost Explorer)
+  → Audit: deployment frequency + failure rate (if not tracked)
+  → Audit: on-call load, MTTD, MTTR (last 3 months)
+  → Identify: top 3 pain points for engineers (survey)
 
-Prevent OOM:
-  1. Set accurate memory limits in K8s (avoid BestEffort QoS)
-  2. Monitor memory trends (alert at 80% before OOM)
-  3. Tune vm.overcommit_memory=2 (don't overcommit):
-     sysctl -w vm.overcommit_memory=2
-     sysctl -w vm.overcommit_ratio=80  # only commit 80% of RAM
-  4. Add swap as emergency buffer (though K8s wants swap=off)
-  5. Memory profiling to fix actual leaks
+  Infra as Code (Month 1):
+  → Terraform all existing infrastructure (use import blocks)
+  → State: S3 backend + DynamoDB locking
+  → Module library: VPC, EKS, RDS, ALB
+  → Outcome: no manual AWS console changes
+  → Metric: 100% IaC coverage for production
+
+  Observability baseline (Month 1-2):
+  → EKS: Prometheus Operator + Grafana + Loki + Jaeger
+  → Dashboards: RED metrics per service (Rate/Errors/Duration)
+  → Alerts: multi-burn-rate SLO alerts (not threshold alerts)
+  → On-call: PagerDuty with proper routing + runbooks per alert
+  → Outcome: MTTD < 2 minutes for any service degradation
+
+  CI/CD standardization (Month 2-3):
+  → GitHub Actions reusable workflows: build/test/push/deploy
+  → ArgoCD: GitOps for all services (dev auto-sync, prod manual)
+  → Branch protection: required CI passing, code review
+  → Outcome: deploy time < 10 minutes, all deploys via CI
+
+  Cost foundation (Month 1):
+  → Tagging enforcement (SCP)
+  → Budget alerts per team
+  → Kill unattached EBS, unused EIPs, idle RDS
+  → Outcome: 10-15% immediate cost reduction
+
+  Metrics at end of Month 3:
+  → Deploy frequency: 5+ per day (was: 1-2 per week)
+  → MTTR: 20 minutes (was: 2 hours)
+  → Cost: first reduction visible
+
+MONTHS 4-6: RELIABILITY (Build confidence)
+
+  SLOs formalized (Month 4):
+  → Define SLOs for all 20 microservices (availability + latency)
+  → Error budget dashboards per service
+  → SLO reviews: monthly with eng leads
+  → Outcome: teams own their reliability
+
+  Security hardening (Month 4-5):
+  → AWS: GuardDuty + Security Hub + Config rules
+  → K8s: OPA Gatekeeper (no latest tag, approved registries)
+  → K8s: NetworkPolicy default-deny + specific allow rules
+  → Secrets: migrate to External Secrets Operator + Vault
+  → Image signing: Cosign in CI/CD
+  → Outcome: zero critical security findings
+
+  Platform engineering (Month 5-6):
+  → Internal developer platform (IDP): Backstage
+  → Service catalog: every service has owner, SLO, runbook
+  → Scaffolding: create new microservice in 5 minutes
+  → Golden paths: pre-built templates for common patterns
+  → Outcome: new engineer productive in 5 days
+
+  Chaos engineering (Month 6):
+  → AWS FIS: schedule monthly AZ failure tests
+  → Verify: PDBs, health checks, circuit breakers work
+  → Game days: simulate major incident with team
+  → Outcome: confidence in resilience
+
+  Metrics at end of Month 6:
+  → Deploy frequency: 10+ per day
+  → MTTR: 10 minutes
+  → Security findings: zero critical
+
+MONTHS 7-9: EFFICIENCY (Optimize)
+
+  Cost optimization deep dive (Month 7-8):
+  → Graviton migration: 80% of workloads on ARM64
+  → Karpenter + Spot: 70-80% Spot usage
+  → VPA + Goldilocks: right-size all deployments
+  → Scale-to-zero: dev/staging off-hours
+  → Outcome: $2M → $1.2M/month (40% reduction)
+
+  Advanced observability (Month 8-9):
+  → OpenTelemetry: auto-instrumentation all services
+  → Distributed tracing: Grafana Tempo
+  → SLO-driven alerting: fully noise-reduced (< 1 page/day)
+  → Thanos: long-term metrics retention (1 year)
+
+  Developer experience (Month 9):
+  → Ephemeral preview environments per PR (ArgoCD PR generator)
+  → One-click rollback (ArgoCD UI)
+  → Self-service infra: Backstage plugins for S3, RDS, etc.
+  → Outcome: engineer survey NPS > 8/10 for platform
+
+  Metrics at end of Month 9:
+  → Cost: growing at 50% of business growth rate ✅
+  → Deploy frequency: 15+ per day ✅
+  → MTTR: 8 minutes ✅
+
+MONTHS 10-12: SCALE (Prepare for growth)
+
+  Multi-region (Month 10-11):
+  → Active-passive in eu-west-1 (for disaster recovery)
+  → RDS: cross-region read replicas
+  → Route53 + Global Accelerator: automated failover
+  → DR drills: quarterly, RTO target 30 minutes
+
+  Platform as a product (Month 12):
+  → Platform team OKRs aligned with engineering productivity
+  → FinOps: monthly cost review with all team leads
+  → Roadmap: public internally (what's coming in next quarter)
+  → Hire: second SRE to handle scale
+
+FINAL STATE METRICS (Month 12):
+  Deploy frequency:      20+ per day ✅
+  MTTR:                  < 10 minutes ✅
+  AWS cost growth:       50% of revenue growth ✅
+  Security incidents:    0 from infra misconfiguration ✅
+  New engineer ramp:     1 week to first production deploy ✅
+  On-call load:          < 2 pages/week per engineer ✅
 ```
 
-> 💡 **Interview tip:** Setting `oom_score_adj = -1000` for critical processes (databases, API servers) is a **production best practice** but it has a cost: if those processes DO have a memory leak, the OOM killer will kill everything else first — potentially cascading failures. The safer approach: set critical processes to `-900` (very unlikely to be killed) but not `-1000` (never). For Kubernetes: **Guaranteed QoS automatically sets oom_score_adj = -997** — this is why setting `requests == limits` for critical pods is so important. It's not just scheduling — it's also OOM protection.
+> 💡 **Interview tip:** The founding SRE design question tests whether you understand **sequencing** — you can't do everything at once. The correct order is always: (1) visibility first (you can't improve what you can't measure), (2) reliability second (stabilize before optimizing), (3) efficiency third (optimize a stable system). The most common mistake: jumping to cost optimization before fixing MTTR — you'll save $200K/month but lose $1M in customer churn from outages. Also: always articulate **metrics per phase** — not just "what we'll build" but "how we'll know it's working." Interviewers at senior levels want to see you think in outcomes and measurements, not just technology choices.
 
 ---
 
-### Q87 — Terraform | Scenario-Based | Advanced
-
-> Deploy infrastructure across **5 AWS regions** using Terraform. The same set of resources (VPC, ECS, RDS) needs to be created in each region with region-specific configurations. How would you structure the code **without massive duplication**?
-
-📁 **Reference:** `nawab312/Terraform` — modules, providers, multi-region deployment sections
-
-#### Key Points to Cover:
-```
-Approach 1 — Provider aliases (for small number of regions):
-  # Configure provider for each region:
-  provider "aws" { alias = "us_east_1"; region = "us-east-1" }
-  provider "aws" { alias = "eu_west_1"; region = "eu-west-1" }
-  provider "aws" { alias = "ap_south_1"; region = "ap-south-1" }
-
-  # Call same module for each region:
-  module "us_east_1" {
-    source    = "./modules/regional-stack"
-    providers = { aws = aws.us_east_1 }
-    region    = "us-east-1"
-    vpc_cidr  = "10.0.0.0/16"
-    db_instance_class = "db.r5.xlarge"  # prod size
-  }
-
-  module "eu_west_1" {
-    source    = "./modules/regional-stack"
-    providers = { aws = aws.eu_west_1 }
-    region    = "eu-west-1"
-    vpc_cidr  = "10.1.0.0/16"
-    db_instance_class = "db.r5.large"   # different size for EU
-  }
-
-Approach 2 — Terragrunt (for 5+ regions, DRY config):
-  # Structure:
-  regions/
-    us-east-1/
-      vpc/terragrunt.hcl      ← just variables, no provider config
-      ecs/terragrunt.hcl
-      rds/terragrunt.hcl
-    eu-west-1/
-      vpc/terragrunt.hcl
-    ap-southeast-1/
-      vpc/terragrunt.hcl
-  terragrunt.hcl              ← root: defines backend + provider for all
-
-  # Root terragrunt.hcl:
-  locals {
-    region = basename(get_terragrunt_dir())  # reads region from dirname
-  }
-  generate "provider" {
-    path = "provider.tf"
-    contents = <<EOF
-      provider "aws" {
-        region = "${local.region}"
-      }
-    EOF
-  }
-
-  # regions/us-east-1/vpc/terragrunt.hcl:
-  terraform {
-    source = "../../../modules/vpc"
-  }
-  inputs = {
-    cidr_block = "10.0.0.0/16"
-    region     = "us-east-1"
-  }
-
-  # Deploy all regions at once:
-  terragrunt run-all apply   # deploys all regions in parallel
-
-Approach 3 — for_each with alias map (advanced, all in one file):
-  locals {
-    regions = {
-      "us-east-1" = { cidr = "10.0.0.0/16", azs = 3 }
-      "eu-west-1" = { cidr = "10.1.0.0/16", azs = 2 }
-      "ap-south-1" = { cidr = "10.2.0.0/16", azs = 2 }
-    }
-  }
-
-  # NOTE: provider aliases can't be dynamic (limitation)
-  # Use separate .tf files per region for provider config
-  # Use modules + for_each for resources within each region
-
-Module structure (regional-stack):
-  modules/regional-stack/
-    main.tf     ← VPC + ECS + RDS resources
-    variables.tf ← region, vpc_cidr, instance_sizes
-    outputs.tf  ← vpc_id, cluster_arn, db_endpoint
-
-Best practices:
-  → Use separate state file per region:
-    backend config key: "regions/us-east-1/terraform.tfstate"
-  → Separate provider credentials per region (same account, different endpoints)
-  → Deploy order: VPC → ECS → RDS (use depends_on or sequential applies)
-  → Terragrunt run-all: parallel deployment (5 regions simultaneously)
-```
-
-> 💡 **Interview tip:** The **Terragrunt approach** is the production answer for 5+ regions. Without Terragrunt, you have provider alias blocks for every region and module calls that look nearly identical — significant repetition. Terragrunt's `run-all apply` also enables **parallel multi-region deployments**, making the process much faster. The key rule: **separate state file per region** — combining all regions in one state file means one region's failure blocks all others, and the state file becomes huge (slow operations). One state per region = independent, parallelizable, isolated blast radius.
-
----
-
-### Q88 — Kubernetes | Conceptual | Advanced
-
-> Explain **init containers** — how are they different from regular and sidecar containers? Give **3 real-world use cases** and write a Pod spec using an init container to wait for a database to be ready before starting the main app.
-
-📁 **Reference:** `nawab312/Kubernetes` → `02_WORKLOADS.md`
-
-#### Key Points to Cover:
-```
-Init containers vs regular vs sidecar:
-
-Regular containers:
-  → Start simultaneously (parallel) after init containers finish
-  → Run for the lifetime of the pod
-  → Any failure = pod restart (based on restartPolicy)
-
-Init containers:
-  → Run BEFORE app containers start
-  → Run SEQUENTIALLY (one at a time, in order)
-  → Must complete SUCCESSFULLY before next init (or app) starts
-  → Exit code 0 = success, move to next
-  → Exit non-zero = retry (pod stays in Init state)
-  → Cannot run as daemons — MUST exit
-
-Sidecar containers (K8s 1.29+):
-  → Run alongside app for pod lifetime (helper/proxy)
-  → New: sidecar type starts before init containers (?!)
-  → Actually: now there's a formal sidecar concept in K8s
-  → Traditional sidecars: just regular containers (no formal distinction pre-1.29)
-  → Examples: log collector, service mesh proxy, metrics exporter
-
-3 real-world use cases:
-
-1. Wait for dependency (DB, API) to be ready:
-   → "Don't start app until database is up"
-   → Init container: until nc -z postgres-svc 5432; do sleep 1; done
-
-2. Database migration before app starts:
-   → "Run schema migrations before new app version starts"
-   → Init container: flyway migrate (must complete successfully)
-   → Guarantees: app never runs with wrong schema version
-
-3. Clone config/secrets from Git or external source:
-   → "Pull config files before app starts"
-   → Init container: git clone config-repo /config
-   → Main app reads /config (shared emptyDir volume)
-
-Pod spec with init container:
-
-apiVersion: v1
-kind: Pod
-metadata:
-  name: payment-service
-spec:
-  initContainers:
-  - name: wait-for-postgres
-    image: busybox:1.35
-    command:
-    - sh
-    - -c
-    - |
-      echo "Waiting for postgres..."
-      until nc -z -w 3 postgres-svc.production.svc.cluster.local 5432; do
-        echo "postgres not ready, sleeping 2s"
-        sleep 2
-      done
-      echo "Postgres is ready!"
-    resources:
-      requests: { cpu: "10m", memory: "16Mi" }
-      limits:   { cpu: "50m", memory: "32Mi" }
-
-  - name: run-migrations
-    image: myapp:v1.2.3
-    command: ["python", "manage.py", "migrate"]
-    env:
-    - name: DATABASE_URL
-      valueFrom:
-        secretKeyRef:
-          name: app-secrets
-          key: database-url
-
-  containers:
-  - name: payment-service
-    image: myapp:v1.2.3
-    ports:
-    - containerPort: 8080
-    env:
-    - name: DATABASE_URL
-      valueFrom:
-        secretKeyRef:
-          name: app-secrets
-          key: database-url
-```
-
-> 💡 **Interview tip:** The **database migration use case** is the most important init container pattern in production. Running migrations in init containers guarantees: (1) migration completes BEFORE any app pod starts receiving traffic, (2) if migration fails, the pod never starts (preventing app from running against wrong schema), (3) in a rolling deployment with 5 replicas, migration runs ONCE (on the first pod's init container), subsequent pods start faster because migration is already done. Without init containers, you'd need complex application-level "run migrations on startup" logic with distributed locking.
-
----
-
-### Q89 — AWS + Kubernetes | System Design | Advanced
-
-> Design a **complete CI/CD and infrastructure architecture** for a company with 20 microservices on EKS, needing: blue/green deployments, multiple AWS accounts (dev/staging/prod), secrets management, and audit logging of all deployments.
-
-📁 **Reference:** All repositories — system design question
-
-#### Key Points to Cover:
-```
-Complete architecture:
-
-1. AWS Account Structure:
-   AWS Organization:
-   ├── Management Account (billing, SCPs)
-   ├── Security Account (GuardDuty, CloudTrail aggregation)
-   ├── Shared Services Account (ECR, Nexus, Vault, Jenkins)
-   ├── Dev Account (EKS dev cluster)
-   ├── Staging Account (EKS staging cluster)
-   └── Prod Account (EKS prod cluster, RDS, ElastiCache)
-
-2. Container Registry (Shared Services):
-   ECR repository per microservice
-   Cross-account access via ECR resource policy
-   Image scanning: ECR Enhanced Scanning (Inspector)
-   Immutable tags enforced
-
-3. CI/CD Pipeline (GitHub Actions):
-   On PR:     tests → SAST (Semgrep) → SCA (Snyk) → lint → plan
-   On merge:  build image → Trivy scan → push ECR → sign (Cosign)
-              → deploy to dev (auto) → integration tests
-              → promote to staging (auto) → E2E tests
-              → promote to prod (manual approval via GitHub Environment)
-
-4. GitOps / Deployment (ArgoCD per cluster):
-   Dev cluster:    ArgoCD with auto-sync, auto-prune
-   Staging:        ArgoCD with auto-sync, no auto-prune
-   Prod:           ArgoCD with manual sync only
-   ApplicationSet: one definition deploys all 20 services per cluster
-
-5. Blue/Green Deployments:
-   Argo Rollouts: manages blue/green at pod level
-   ALB ingress: weighted target groups (100% blue → 100% green)
-   Rollback: instant (switch weights back)
-
-   apiVersion: argoproj.io/v1alpha1
-   kind: Rollout
-   spec:
-     strategy:
-       blueGreen:
-         activeService: payment-active
-         previewService: payment-preview
-         autoPromotionEnabled: false  # manual promotion to prod
-         scaleDownDelaySeconds: 60    # keep blue for 60s after green promoted
-
-6. Secrets Management (HashiCorp Vault):
-   Vault deployed in Shared Services account
-   Vault Agent Injector: sidecar injects secrets into pod
-   Secrets never in Git, never in env vars (injected at runtime)
-   Or: AWS Secrets Manager + External Secrets Operator
-
-7. Audit Logging of all deployments:
-   CloudTrail: every AWS API call (ECR push, EKS deploy)
-   ArgoCD: deployment history (who synced, which commit, when)
-   GitHub Actions: complete workflow audit (in GitHub audit log)
-   ArgoCD Notifications: Slack message per deployment:
-     "Payment service v1.2.3 deployed to prod by @siddharth"
-
-8. Observability:
-   Prometheus Operator: deployed per cluster
-   Thanos: aggregate metrics across clusters
-   Grafana: central dashboard (all clusters)
-   Loki: log aggregation
-   Jaeger: distributed tracing
-   PagerDuty: incident alerting
-
-9. Networking:
-   VPC per account, Transit Gateway for cross-account connectivity
-   NACLs: strict, allowing only required traffic
-   Security Groups: least privilege per service
-   VPC Endpoints: ECR, S3, Secrets Manager (no internet egress)
-```
-
-> 💡 **Interview tip:** System design questions test **architectural breadth + justification**. Don't just list services — explain WHY. "Separate AWS accounts per environment" is the recommendation because it provides the strongest isolation (blast radius, IAM boundary, billing separation). If someone compromises dev, they can't access prod. One account for all environments means dev IAM mistakes can affect prod. Also: **always mention the "Day 2" concerns** (upgrades, monitoring, backup) not just Day 1 setup — this shows operational maturity.
-
----
-
-### Q90 — All Topics | System Design | Advanced
-
-> Design the **complete SRE platform** to achieve: 99.99% uptime SLO, MTTR under 5 minutes, zero-downtime deployments, full observability (metrics/logs/traces), and automated incident response.
-
-📁 **Reference:** All repositories — comprehensive SRE design
-
-#### Key Points to Cover:
-```
-1. Zero-downtime deployments (99.99% SLO baseline):
-   Argo Rollouts: canary or blue/green
-   PodDisruptionBudgets: always minAvailable >= 2
-   Rolling update: maxUnavailable: 0, maxSurge: 1
-   Readiness probes: gate traffic until ready
-   PreStop hooks: drain connections before termination
-   terminationGracePeriodSeconds: 60 (enough to finish in-flight requests)
-
-2. Full observability (before you can automate, you must observe):
-   Metrics:    Prometheus + Thanos (long-term) + Grafana
-   Logs:       Loki or Elasticsearch + Kibana
-   Traces:     Jaeger / Tempo (OpenTelemetry SDK in apps)
-   SLOs:       Prometheus recording rules + error budget dashboards
-
-3. Alerting strategy (MTTR goal = 5 minutes):
-   Multi-burn-rate alerts (Google SRE Workbook)
-   Fast burn (14.4x): PagerDuty page → on-call in < 2 minutes
-   Slow burn (3x): Slack notification → acknowledge in hours
-   No alert if no SLO impact (alert on symptoms, not causes)
-   Alert quality: < 1 alert/day average (no noise)
-
-4. Automated incident response (MTTR reduction):
-   Runbook automation (Ansible/Python scripts):
-     → "High error rate" → auto-rollback if deployed in last 30 min
-     → "Pod crash loop" → auto-scale + alert
-     → "Disk full" → auto-cleanup + alert
-   PagerDuty + Rundeck/AWS Systems Manager: one-click runbook execution
-
-   Slack bot for common actions:
-     /rollback payment-service   → triggers ArgoCD rollback
-     /scale payment-service 10   → scales deployment
-
-5. Incident management process:
-   Severity levels: P1 (SLO breach) → P2 (degraded) → P3 (at risk)
-   P1: Automated detection → PagerDuty → on-call in 2 min
-   On-call: acknowledge → triage (2 min) → mitigate (3 min) → MTTR < 5 min
-   Post-incident: blameless postmortem within 48 hours
-
-6. Chaos engineering (prevent incidents):
-   Chaos Monkey: random pod kills in production (Netflix approach)
-   AWS Fault Injection Simulator: AZ failures, network latency
-   Run chaos during business hours when team is available
-   Establish steady state → run experiment → verify steady state returns
-
-7. Capacity planning (prevent future incidents):
-   Horizontal Pod Autoscaler + KEDA for event-driven scaling
-   Cluster Autoscaler + Karpenter for node scaling
-   Forecast: Prometheus query for load growth trend
-   Pre-scale before known peak events (Black Friday, product launches)
-
-8. SLO management:
-   Each service has: availability SLO + latency SLO
-   Error budget: calculated daily
-   Budget frozen (< 10% remaining): no feature deploys, only reliability work
-   Budget healthy (> 50%): ship features
-
-MTTR breakdown for < 5 minutes:
-  Detection:   0-2 minutes (fast burn alert fires)
-  Acknowledge: 0-1 minutes (PagerDuty, on-call available)
-  Mitigate:    1-3 minutes (rollback command, auto-runbook)
-  Resolve:     30 seconds (ArgoCD rollback takes 30s)
-  Total:       < 5 minutes
-```
-
-> 💡 **Interview tip:** The 99.99% SLO means **52 minutes of downtime per year** (4.4 minutes/month). This sounds aggressive but it's achievable with: (1) **zero-downtime deployments** (eliminate deployment downtime entirely), (2) **fast automated rollback** (reduce incident duration to < 5 minutes), (3) **multi-AZ with auto-failover** (eliminate AZ-level single points of failure). The key insight: at 99.99%, you can't afford to have humans manually diagnose and fix — the **automated rollback on error rate spike** is what enables MTTR < 5 minutes. Humans would take 15-30 minutes; automated response takes 30 seconds.
-
----
-
-*Q46–Q90 Enhanced with Key Points to Cover + Interview Tips*
+*Q406–Q450 Enhanced with Key Points to Cover + Interview Tips*
 *DevOps / SRE Interview Preparation — nawab312 GitHub repositories*
