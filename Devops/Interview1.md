@@ -2435,6 +2435,31 @@ Step 1 — Verify from inside the Pod:
   
   # Test DNS resolution
   nslookup mydb.cluster-xyz.us-east-1.rds.amazonaws.com
+  --- OUTPUT ---
+  Server:         172.20.0.10
+  Address:        172.20.0.10#53
+  
+  Non-authoritative answer:
+  Name:   mydb.cluster-xyz.us-east-1.rds.amazonaws.com
+  Address: 10.0.3.45
+  -------------
+  OR
+  -------------
+  Server:         172.20.0.10
+  Address:        172.20.0.10#53
+  
+  ** server can't find mydb.cluster-xyz.us-east-1.rds.amazonaws.com: NXDOMAIN
+  ------------
+  OR
+  ------------
+  ;; connection timed out; no servers could be reached
+  ------------
+  Quick rule:
+  Got a 10.x.x.x IP back  →  DNS is fine, dig deeper into network/SG layer
+  NXDOMAIN                →  wrong RDS endpoint string
+  Timeout                 →  CoreDNS or Pod networking is broken
+
+  ---------------------
   
   # Test TCP connectivity
   nc -zv mydb.cluster-xyz.us-east-1.rds.amazonaws.com 5432
