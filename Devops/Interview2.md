@@ -1374,6 +1374,104 @@ Step 7 — Prevention:
   → Configure S3 snapshot policy: daily snapshots
   → Monitor: elasticsearch_cluster_health_status != 0 → alert
   → Set up ILM (Index Lifecycle Management) to prevent disk full
+
+Elasticsearch Cluster
+ ___________________________________________________________
+
+
+  ┌─────────────────────────────────────────────────────────┐
+  │                     Master Node                         │
+  │         tracks all nodes · manages cluster state        │
+  └───────────────────────────┬─────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+              ▼               ▼               ▼
+  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+  │  Data Node 1  │  │  Data Node 2  │  │  Data Node 3  │
+  │               │  │               │  │               │
+  │  Shard P0  ●  │  │  Shard P1  ●  │  │  Shard P2  ●  │
+  │  Shard R1  ○  │  │  Shard R2  ○  │  │  Shard R0  ○  │
+  │  Shard R2  ○  │  │  Shard R0  ○  │  │  Shard R1  ○  │
+  └───────────────┘  └───────────────┘  └───────────────┘
+
+  ● = Primary shard      ○ = Replica shard
+
+
+ ___________________________________________________________
+                     What each shard holds
+
+  Index: logs-2024.01   →   split into 3 primary shards
+
+  P0  →  documents 1   to 1000    lives on Node 1
+  P1  →  documents 1001 to 2000   lives on Node 2
+  P2  →  documents 2001 to 3000   lives on Node 3
+
+  R0  →  copy of P0               lives on Node 2 + Node 3
+  R1  →  copy of P1               lives on Node 1 + Node 3
+  R2  →  copy of P2               lives on Node 1 + Node 2
+
+
+ ___________________________________________________________
+                     GREEN vs YELLOW vs RED
+
+  GREEN — everything assigned:
+
+    Node 1   Node 2   Node 3
+     P0 ●     P1 ●     P2 ●    ← all primaries assigned
+     R1 ○     R2 ○     R0 ○    ← all replicas assigned
+
+
+  YELLOW — replica missing (node 3 died):
+
+    Node 1   Node 2   Node 3
+     P0 ●     P1 ●     P2 ●    ← primaries still ok
+     R1 ○     R2 ○     ✗       ← R0 unassigned (node 3 gone)
+                                  data readable but no backup
+
+
+  RED — primary missing (node 2 died, no replica of P1):
+
+    Node 1   Node 3
+     P0 ●     P2 ●
+     R1 ○     R0 ○
+              ✗               ← P1 unassigned
+                                 documents 1001–2000 INACCESSIBLE
+                                 queries return partial results
+
+
+ ___________________________________________________________
+                     Why replica = 1 is non-negotiable
+
+  number_of_replicas: 0          number_of_replicas: 1
+
+    Node 1   Node 2               Node 1   Node 2
+     P0 ●     P1 ●                 P0 ●     P1 ●
+     P2 ●                          P2 ●     R0 ○
+                                   R1 ○     R2 ○
+
+    Node 2 dies →                 Node 2 dies →
+    P1 gone forever               R1 promoted to primary
+    cluster goes RED              cluster stays YELLOW
+    data lost                     no data loss
+
+
+ ___________________________________________________________
+  Logstash → Elasticsearch → Kibana
+
+  ┌──────────┐   index    ┌─────────────┐   query   ┌────────┐
+  │Logstash  │ ─────────► │Elasticsearch│ ◄──────── │Kibana  │
+  │          │            │  (RED)      │           │        │
+  │indexing  │            │             │           │no data │
+  │failures  │ ◄────────  │rejects docs │           │shown   │
+  └──────────┘   error    └─────────────┘           └────────┘
+
+  Cluster RED → Elasticsearch rejects new documents
+             → Logstash gets indexing errors
+             → Kibana queries return no results
+             → Fix the cluster first → everything else recovers
+
+ ___________________________________________________________
 ```
 
 > 💡 **Interview tip:** RED cluster status = **primary shard unassigned** = that data is currently inaccessible. The fastest diagnostic: `_cluster/allocation/explain` — this single API call tells you exactly why the shard isn't allocating (not enough disk space, node missing, shard corrupted). The most common production RED scenario: a data node was terminated and it held the ONLY copy of some shards (replica count was 0). This is why `number_of_replicas: 1` is non-negotiable for production. Always mention: **configure automatic snapshots to S3 from day one** — they're your safety net when cluster recovery isn't possible.
