@@ -508,6 +508,72 @@ Step 4 — PromQL queries:
   # Errors: sum(rate(http_requests_total{status_code=~"5.."}[5m]))
   # Durat:  histogram_quantile(0.99, sum by(le)(rate(http_request_duration_seconds_bucket[5m])))
 ```
+```
+                        ┌─────────────────────────┐
+                        │     Client Requests     │
+                        │  (Browser / API Call)   │
+                        └────────────┬────────────┘
+                                     │
+                                     ▼
+                          ┌──────────────────┐
+                          │   Node.js App    │
+                          │  (Express API)   │
+                          └─────────┬────────┘
+                                    │
+                      Middleware collects metrics
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        │                           │                           │
+        ▼                           ▼                           ▼
+┌─────────────────┐       ┌──────────────────┐       ┌────────────────────┐
+│ http_requests   │       │ http_request     │       │ Default Metrics    │
+│ _total Counter  │       │ _duration        │       │ CPU / Memory / GC  │
+│                 │       │ _seconds Histogram│      │                    │
+└─────────┬───────┘       └─────────┬────────┘       └──────────┬─────────┘
+          │                         │                           │
+          └───────────────┬─────────┴───────────────┬───────────┘
+                          │                         │
+                          ▼
+                 ┌───────────────────┐
+                 │  /metrics Endpoint │
+                 │   (prom-client)   │
+                 └─────────┬─────────┘
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │ Kubernetes Service   │
+                │ Port: http-metrics   │
+                │ Port: 9090           │
+                └─────────┬────────────┘
+                          │
+                          ▼
+                ┌──────────────────────┐
+                │    ServiceMonitor    │
+                │  (Prometheus Operator)│
+                │  Scrape every 30s    │
+                └─────────┬────────────┘
+                          │
+                          ▼
+                ┌──────────────────────┐
+                │      Prometheus      │
+                │   Time Series DB     │
+                │  Stores metrics      │
+                └─────────┬────────────┘
+                          │
+                          ▼
+                ┌──────────────────────┐
+                │       PromQL         │
+                │   Query Metrics      │
+                └─────────┬────────────┘
+                          │
+                          ▼
+                ┌──────────────────────┐
+                │      Grafana         │
+                │   RED Dashboards     │
+                │  Rate / Errors /     │
+                │  Duration (p99)      │
+                └──────────────────────┘
+```
 
 > 💡 **Interview tip:** Use **Histogram (not Summary)** for latency in Kubernetes — Histograms can be aggregated across multiple pods (`sum by(le)`), Summaries cannot. With 10 pods, `histogram_quantile` correctly calculates p99 across all 10 pods. Summary calculates per-pod and cannot be aggregated. Also mention: always add a `/metrics` endpoint secured with network policy or basic auth — you don't want metrics exposed publicly. The `prom-client` `collectDefaultMetrics()` is often overlooked but provides CPU, memory, event loop lag, GC metrics for free.
 
