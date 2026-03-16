@@ -682,6 +682,45 @@ CloudWatch — METRICS AND MONITORING:
   → Stores: numeric metrics + log data
   → Log Insights: query logs with SQL-like syntax
 
+  -> Cloudwatch Metrics:
+    -> Metrics are numerical time-series data points.
+    -> Structure of a metric: MetricName + Dimensions + Timestamp + Value. Example
+        CPUUtilization
+        InstanceId=i-123
+        Timestamp=10:05
+        Value=72%
+  -> CloudWatch Logs:
+    -> Logs are unstructured or semi-structured text records.
+    -> Structure: timestamp + message. Often JSON:
+        {
+          "timestamp": "2026-03-16T10:22:10Z",
+          "level": "ERROR",
+          "service": "checkout",
+          "message": "Payment failed",
+          "userId": 421
+        }
+    -> Querying logs: Using CloudWatch Logs Insights. Example query:
+        fields @timestamp, message
+        | filter status_code >= 500
+        | sort @timestamp desc
+        | limit 20
+  -> CloudWatch Events
+    -> Events are discrete system occurrences. Example:
+        EC2 Instance State Change
+        Instance terminated
+        CodePipeline stage failed
+        ECS task stopped
+    -> These events are processed by Amazon EventBridge (formerly CloudWatch Events). Structure:
+        {
+          "source": "aws.ec2",
+          "detail-type": "EC2 Instance State-change Notification",
+          "detail": {
+            "instance-id": "i-123",
+            "state": "terminated"
+          }
+        }
+    -> not continuous, triggered when something happens
+
 CloudTrail — API AUDIT TRAIL:
   → Records EVERY API call made in your AWS account
   → Who did what, when, from where
