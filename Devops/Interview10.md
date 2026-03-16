@@ -987,6 +987,8 @@ Step 1 — Check Envoy proxy logs (most informative):
   # UC = Upstream connection timeout
   # NR = No route (no matching VirtualService/DestinationRule)
   # "503 UH" = no healthy upstream hosts → endpoint issue
+  # “upstream” simply means the service that Envoy is trying to send the request to. Client → Envoy proxy → Application service
+    From Envoy’s perspective: Client = downstream, Target service = upstream
 
 Step 2 — Check proxy-status (config sync):
   istioctl proxy-status
