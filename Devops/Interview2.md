@@ -1927,10 +1927,20 @@ Observability (automatic with Istio):
 
 #### Key Points to Cover:
 ```
+A disk I/O bottleneck happens when a system is waiting on the disk to read or write data faster than the disk can handle.
+Application → requests data
+Disk → cannot serve requests fast enough
+CPU → waits idle
+System → becomes slow
+```
+```
 Step 1 — Quick check (is I/O the issue?):
   top   # look at: %wa (iowait column)
         # iowait > 20% = CPU waiting for I/O = strong signal
-
+        # If iowait > 20%, it means that more than 20% of the CPU time
+          # is spent waiting for I/O operations (disk or sometimes network storage) to complete.
+          # CPU is idle but blocked, waiting for data from disk or storage.
+          # System performance may feel slow, even if CPU usage looks low.
   vmstat 1 5
   # Look at: wa column (iowait), b (blocked processes)
   # wa consistently > 10 = I/O saturation
