@@ -3160,6 +3160,23 @@ aws ec2 create-vpc-endpoint \
 - Instead of mounting 3 separate volumes at 3 paths, mount 1 projected volume with all 3 sources
 - Cleaner Pod spec, single volume mount point
 
+```
+Without projected volume
+
+/config          ← ConfigMap
+/secret          ← Secret
+/token           ← ServiceAccount token
+/metadata        ← Downward API
+```
+```
+/var/run/secrets
+
+/var/run/secrets/token
+/var/run/secrets/config/app.properties
+/var/run/secrets/db/password
+/var/run/secrets/labels
+```
+
 **Supported sources in projected volumes:**
 1. `serviceAccountToken` — projected SA token with custom audience/expiry
 2. `configMap` — ConfigMap data
