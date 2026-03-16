@@ -628,6 +628,33 @@
 
 📁 **Reference:** All repositories — enterprise migration, phased approach, cloud-native transformation
 
+#### Key Points to Cover:
+```
+Phase 1 (Months 1–4): Foundation & Assessment
+Start by auditing all 500 VMs — classify workloads into lift-and-shift, refactor, replace, or retire. Build the AWS landing zone (VPCs, IAM, networking), set up the CI/CD skeleton (GitLab/GitHub Actions + ArgoCD), and begin containerizing stateless services first. Oracle → PostgreSQL schema conversion analysis happens here using AWS Schema Conversion Tool.
+
+Phase 2 (Months 5–10): Parallel Running
+Run on-prem and AWS environments simultaneously. Migrate microservices in waves using the strangler fig pattern — peel functionality off WebLogic monoliths incrementally. Stand up RDS PostgreSQL, validate data fidelity using DMS, and keep Oracle as the source of truth until cutover. The 15 developers should be working in squads aligned to service boundaries.
+
+Phase 3 (Months 11–16): Data Migration & Cutover
+This is where the 4-hour downtime constraint becomes critical. Use AWS DMS for continuous replication → stop writes → final sync → DNS flip → validate → announce done. Blue/green deployment at the DNS layer is the key technique. Any rollback must be executable in under 30 minutes.
+
+Phase 4 (Months 17–18): Optimization & Decommission
+Tune autoscaling, right-size RDS, implement observability (Prometheus + Grafana + OpenTelemetry), shut down on-prem VMs, and conduct a full retrospective.
+```
+
+> 💡 **Interview tip:** Lead with risk, not technology. Interviewers want to know you think about what can go wrong before you think about what's cool. Open every answer with the constraint that shapes the decision — in this case, the **4-hour downtime window**.
+
+> 💡 **Interview tip:** Name the pattern before you explain it. Say **"strangler fig"** or **"blue/green"** before explaining how it works. It signals fluency; the explanation then becomes proof you actually understand it, not just memorized the term.
+
+> 💡 **Interview tip:** Show you can communicate with both audiences. Engineers want to hear about **DMS CDC latency** and **Kubernetes readiness probes**. Executives want to hear about **rollback time** and **business continuity**. Practice switching registers in the same answer.
+
+> 💡 **Interview tip:** The 4-hour window is the trap question. Interviewers will probe this hard. The right answer is: the window isn't about migration time, it's about **write quiescence**. You achieve this through continuous replication with DMS, so the actual downtime is only the final sync + DNS TTL expiry + smoke test. Have numbers ready: **DMS lag under 30 seconds**, **DNS TTL pre-lowered to 60 seconds** 48 hours before cutover.
+
+> 💡 **Interview tip:** Anchor the team structure to the strategy. Don't just say "15 developers in squads." Say **"3 squads aligned to service domains — one per major bounded context — so Oracle schema ownership maps cleanly to a team. The 3 DevOps engineers own the platform layer and the DMS pipeline, not individual services."** This shows systems thinking.
+
+> 💡 **Interview tip:** Know your failure modes. What happens if the final DMS sync takes longer than expected? *(Abort, roll back DNS, root cause in DMS metrics, reschedule.)* What if a PostgreSQL type conversion breaks in production? *(Schema validation suite run in staging with production data snapshots, `pg_dump` comparison.)* Having practiced failure paths is what separates **principal-level answers** from senior-level ones.
+
 ---
 
 ## Key Topics Coverage (Q361–Q405)
