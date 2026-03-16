@@ -631,13 +631,24 @@
 #### Key Points to Cover:
 ```
 Phase 1 (Months 1–4): Foundation & Assessment
-Start by auditing all 500 VMs — classify workloads into lift-and-shift, refactor, replace, or retire. Build the AWS landing zone (VPCs, IAM, networking), set up the CI/CD skeleton (GitLab/GitHub Actions + ArgoCD), and begin containerizing stateless services first. Oracle → PostgreSQL schema conversion analysis happens here using AWS Schema Conversion Tool.
+Start by auditing all 500 VMs — classify workloads into lift-and-shift, refactor, replace, or retire.
+Build the AWS landing zone (VPCs, IAM, networking),
+set up the CI/CD skeleton (GitLab/GitHub Actions + ArgoCD),
+and begin containerizing stateless services first.
+Oracle → PostgreSQL schema conversion analysis happens here using AWS Schema Conversion Tool.
 
 Phase 2 (Months 5–10): Parallel Running
-Run on-prem and AWS environments simultaneously. Migrate microservices in waves using the strangler fig pattern — peel functionality off WebLogic monoliths incrementally. Stand up RDS PostgreSQL, validate data fidelity using DMS, and keep Oracle as the source of truth until cutover. The 15 developers should be working in squads aligned to service boundaries.
+Run on-prem and AWS environments simultaneously.
+Migrate microservices in waves using the strangler fig pattern — peel functionality off WebLogic monoliths incrementally.
+Stand up RDS PostgreSQL, validate data fidelity using DMS, and
+keep Oracle as the source of truth until cutover.
+The 15 developers should be working in squads aligned to service boundaries.
 
 Phase 3 (Months 11–16): Data Migration & Cutover
-This is where the 4-hour downtime constraint becomes critical. Use AWS DMS for continuous replication → stop writes → final sync → DNS flip → validate → announce done. Blue/green deployment at the DNS layer is the key technique. Any rollback must be executable in under 30 minutes.
+This is where the 4-hour downtime constraint becomes critical.
+Use AWS DMS for continuous replication → stop writes → final sync → DNS flip → validate → announce done.
+Blue/green deployment at the DNS layer is the key technique.
+Any rollback must be executable in under 30 minutes.
 
 Phase 4 (Months 17–18): Optimization & Decommission
 Tune autoscaling, right-size RDS, implement observability (Prometheus + Grafana + OpenTelemetry), shut down on-prem VMs, and conduct a full retrospective.
