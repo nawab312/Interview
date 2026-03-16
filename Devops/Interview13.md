@@ -4657,28 +4657,92 @@ Tools in order:
 
 **Scenario 1: High CPU, low throughput:**
 ```bash
+# Suppose a service is using 90% CPU, but it processes very few requests.
 # Step 1: Which process?
 top                       # find PID with highest CPU
 top -H -p <PID>           # which THREAD in that process?
 
 # Step 2: What is it doing? (syscall level)
 strace -p <PID> -c        # summary of syscalls (what's taking most time)
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+70.12    1.402000          14    100000           futex
+15.40    0.308000           6     50000           epoll_wait
+10.21    0.204000           2    100000           clock_gettime
+ 4.27    0.085000           3     30000           read
+------ ----------- ----------- --------- --------- ----------------
+100.00    1.999000                  280000 total
+
 strace -p <PID>           # live syscall trace
 
 # Common findings:
-# Many futex() calls → lock contention (mutex/semaphore)
+# Many futex() calls →
+  # Futex is the Linux syscall used for thread locking.
+  # 70% time in futex means threads are constantly contending for locks
+  # Possible causes: thread pool contention, synchronized data structures, inefficient mutex usage
+  # Effect: CPU busy switching threads, Actual work low
 # Many read()/write() → I/O bound
 # Many clone() → spawning too many threads
 # Tight loop (no blocking syscalls) → CPU-bound computation
 
-# Step 3: Function-level profiling
+# Step 3: Function-level profiling. perf shows which functions inside the program are consuming CPU.
 perf top -p <PID>         # which functions are hot?
+  35.20%  nginx     [.] ngx_http_process_request
+  20.10%  libc.so   [.] memcpy
+  12.50%  nginx     [.] ngx_hash_find
+   8.70%  libc.so   [.] malloc
+   5.40%  kernel    [k] tcp_recvmsg
+
 perf record -p <PID> -g   # record with call graph
-perf report               # show flame graph data
+# This records CPU samples over time, including call stacks.
+# -g -> capture call graph (who called whom)
+# What happens:
+CPU samples
+     ↓
+function stack traces
+     ↓
+saved to perf.data
+# Example recorded stack:
+handle_request
+ └── parse_json
+      └── allocate_buffer
+           └── malloc
+# Now we know the full call chain, not just the hot function.
+perf report               # This analyzes the recorded data.
+# Example output:
+Overhead  Command   Shared Object      Symbol
+----------------------------------------------------
+ 40.5%    myapp     myapp               parse_json
+ 25.2%    myapp     libc.so             memcpy
+ 10.8%    myapp     myapp               process_request
 ```
 
 **Scenario 2: High I/O wait:**
 ```bash
+# High I/O wait means the CPU is idle because it is waiting for input/output operations to complete, typically disk or network operations.
+# Suppose a program reads a file. read("users.db")
+# What actually happens internally in the OS:
+
+Application
+   ↓
+CPU executes read() syscall
+   ↓
+Kernel sends request to disk
+   ↓
+Disk controller fetches data
+   ↓
+Disk returns data to memory
+   ↓
+CPU resumes program
+
+# The slow part is here: Disk fetch
+# Why the CPU cannot continue
+
+data = read(file);
+process(data);
+
+# The CPU must wait for read() to finish before executing:
+
 # Step 1: Confirm I/O wait
 vmstat 1
 # CPU: wa column (I/O wait %) - if > 20% consistently → I/O bottleneck
