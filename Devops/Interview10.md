@@ -978,6 +978,56 @@ Deduplication mechanism:
 
 #### Key Points to Cover:
 ```
++----------------------------------------------------------------------------------+
+|                                  CONTROL PLANE                                   |
+|                                                                                  |
+|   +-------------------+     +-------------------+     +-------------------+      |
+|   |       Pilot       |     |      Citadel      |     |       Galley      |      |
+|   |-------------------|     |-------------------|     |-------------------|      |
+|   | Service discovery |     | Cert issuance &   |     | Config validation |      |
+|   | & config push     |     | rotation (mTLS)   |     | & distribution    |      |
+|   | (xDS)             |     |                   |     |                   |      |
+|   +-------------------+     +-------------------+     +-------------------+      |
+|                                                                                  |
+|              (All three merged into Istiod in modern Istio versions)            |
++----------------------------------------------------------------------------------+
+                                   |
+                                   |  xDS config push
+                                   v
++----------------------------------------------------------------------------------+
+|                                   DATA PLANE                                     |
+|                                                                                  |
+|   +---------------------------+            +---------------------------+         |
+|   |           POD A           |            |           POD B           |         |
+|   |                           |            |                           |         |
+|   |   +-------------------+   |            |   +-------------------+   |         |
+|   |   |   App Container   |   |            |   |   App Container   |   |         |
+|   |   |     port 8080     |   |            |   |     port 8080     |   |         |
+|   |   +-------------------+   |            |   +-------------------+   |         |
+|   |            |              |            |            |              |         |
+|   |            v              |            |            v              |         |
+|   |   +-------------------+   |            |   +-------------------+   |         |
+|   |   |    Envoy Sidecar  |<===================>|    Envoy Sidecar  |   |         |
+|   |   |     istio-proxy   |   |   mTLS encrypted  |     istio-proxy   |   |         |
+|   |   +-------------------+   |      traffic      +-------------------+   |         |
+|   |                           |            |                           |         |
+|   |      (iptables intercept) |            |      (iptables intercept) |         |
+|   +---------------------------+            +---------------------------+         |
+|                                                                                  |
++----------------------------------------------------------------------------------+
+
+---
+
+1. App A sends request
+2. iptables redirects traffic to Envoy A
+3. Envoy A checks routing rules
+4. Routing rules come from VirtualService + DestinationRule
+5. Envoy A sends request through mTLS tunnel
+6. Envoy B receives request
+7. Envoy B forwards request to App B
+
+---
+
 Step 1 — Check Envoy proxy logs (most informative):
   kubectl logs <pod-name> -c istio-proxy | grep -E "503|error|UF|UH|UR"
   # Envoy response flags:
@@ -990,7 +1040,16 @@ Step 1 — Check Envoy proxy logs (most informative):
   # “upstream” simply means the service that Envoy is trying to send the request to. Client → Envoy proxy → Application service
     From Envoy’s perspective: Client = downstream, Target service = upstream
 
-Step 2 — Check proxy-status (config sync):
+Step 2 — Check proxy-status (config sync). Whether the proxy inside your pod actually received the correct configuration from Istio’s control plane.
+  The control plane in Istio is Istiod, and the proxy inside each pod is Envoy Proxy. In an Istio mesh:
+  Istiod (control plane)
+        ↓ pushes config
+  Envoy proxy (inside every pod)
+        ↓ forwards traffic
+  Other services/pods
+
+  Istiod sends configuration like: what services exist, what endpoints exist, routing rules, retries, timeouts, etc.
+
   istioctl proxy-status
   # Shows: each pod and whether Envoy config is SYNCED with Istiod
   # If STALE: Istiod pushed config that pod hasn't received yet
@@ -1010,8 +1069,25 @@ Step 3 — Run analyze for config issues:
 
 Step 4 — mTLS policy mismatch (common 503 cause):
   # Strict mTLS on service B but service A has no sidecar:
+  # Flow becomes: App A → plain HTTP → Service B. But Service B expects mTLS. So the connection fails.
+  # Working scenario: App A → Envoy A → mTLS → Envoy B → App B
+  # App A → (no Envoy) → plain HTTP → Envoy B (rejects connection)
+
   kubectl get peerauthentication -A
-  kubectl get destinationrule -A
+  NAMESPACE      NAME         MODE        AGE
+  istio-system   default      STRICT      10d  --> STRICT: Only mTLS allowed
+  production     payments     DISABLE     3d   --> DISABLE: mTLS disabled
+  default        default      PERMISSIVE  15d  --> PERMISSIVE: Accept both mTLS and plain traffic
+
+  kubectl get destinationrule -A (Check client-side TLS config)
+  # A DestinationRule tells the client proxy how to connect to the service. Example:
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+  # This means: Client Envoy → use mTLS when talking to service
+  # Where the mismatch happens
+  PeerAuthentication → STRICT
+  DestinationRule → TLS disabled
 
   # Check if namespace has STRICT mTLS:
   kubectl get peerauthentication default -n production -o yaml
