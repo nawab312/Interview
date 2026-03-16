@@ -2347,16 +2347,29 @@ Organizing 100+ Jenkins jobs:
 📁 **Reference:** `nawab312/DSA` → `Linux`, `nawab312/Kubernetes` → `13_DOCKER_CONTAINER_FUNDAMENTALS.md`
 
 ```
-Containers = Linux processes with namespaces + cgroups applied.
-No magic. No VM. Just Linux kernel features.
+Containers are just regular Linux processes with two kernel mechanisms applied:
+  Linux Namespaces → isolation (what the process can see)
+  Linux Control Groups (cgroups) → resource control (what the process can use).
+No hypervisor, no guest OS like in a VM. The kernel enforces isolation boundaries.
 
-NAMESPACES — provide isolation (what the process can SEE):
+Namespaces create separate views of system resources so a process thinks it is running on its own machine.
+Each container gets its own set of namespaces.
+There are 7 namespaces used by containers.
 
   1. PID namespace:
      Process sees its own PID tree starting from PID 1
      Cannot see host processes or other container processes
      docker run → container process is PID 1 inside its namespace
      but host sees it as PID 47382
+     Host view
+      PID   PROCESS
+      1     systemd
+      2043  dockerd
+      47382 container_process
+     Container view
+      PID   PROCESS
+      1     nginx
+      7     worker_process
 
   2. Network namespace:
      Own network interfaces, IP addresses, routing tables, iptables rules
@@ -2365,8 +2378,20 @@ NAMESPACES — provide isolation (what the process can SEE):
 
   3. Mount (mnt) namespace:
      Own filesystem view
-     Container sees / as its root (from the container image)
-     Cannot see host filesystem (unless explicitly volume-mounted)
+     For Containers Root filesystem comes from the container image layers
+     Host filesystem:
+      /
+      ├── etc
+      ├── var
+      ├── home
+      └── usr
+     Container view
+      /
+      ├── bin
+      ├── etc
+      ├── app
+      └── lib
+     Cannot see host filesystem (unless explicitly volume-mounted): docker run -v /host/data:/data
 
   4. UTS namespace:
      Own hostname and domain name
