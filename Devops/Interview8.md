@@ -89,6 +89,89 @@
 
 📁 **Reference:** `nawab312/DSA` → `Linux` — CFS scheduler, nice values, CPU scheduling sections
 
+#### Key Points to Cover:
+```
+CFS — Completely Fair Scheduler:
+  → Default Linux scheduler since kernel 2.6.23
+  → Goal: give every process a "fair" share of CPU proportional to its weight
+  → Tracks vruntime (virtual runtime) per process — nanoseconds of CPU used,
+    normalized by process weight
+  → Always picks the process with the LOWEST vruntime to run next
+  → Uses a red-black tree (self-balancing BST) as the run queue
+    → leftmost node = lowest vruntime = next to run → O(log N) pick
+  → Time slice is dynamic: proportional to weight, shrinks as more processes compete
+  → No starvation: sleeping processes don't accumulate vruntime,
+    so they don't get a huge burst on wakeup (vruntime is clamped)
+
+nice values:
+  → Range: -20 (highest priority) to +19 (lowest priority), default 0
+  → Maps to a weight: nice 0 = weight 1024, each step is ~10% more/less CPU
+  → nice -20 ≈ 3x more CPU than nice 0; nice +19 ≈ 5x less CPU than nice 0
+  → Set with: nice -n 10 command OR renice -n 10 -p <pid>
+  → Only root can set negative nice values
+  → nice controls CPU scheduling ONLY — not I/O
+
+ionice:
+  → Controls I/O scheduling priority (separate from CPU scheduling)
+  → Uses CFQ (Complete Fair Queuing) or BFQ I/O scheduler
+  → Three classes:
+      Class 1 (Realtime):   gets I/O first, can starve others
+      Class 2 (Best-effort): default, takes a priority 0–7
+      Class 3 (Idle):       only gets I/O when nothing else needs disk
+  → Set with: ionice -c 3 -p <pid>   (make process idle I/O class)
+  → Use case: backup jobs — nice +19 AND ionice -c 3 = zero impact on system
+
+Scheduling Policies:
+  SCHED_OTHER (normal):
+    → CFS-based, used by virtually all userspace processes
+    → Weight determined by nice value
+    → Not real-time — can be preempted by any RT task
+
+  SCHED_FIFO (real-time):
+    → First In First Out — runs until it voluntarily yields or blocks
+    → NO time slice — can monopolize CPU forever
+    → Priority 1–99 (higher = runs first)
+    → Higher priority SCHED_FIFO always preempts lower priority
+    → Risk: a buggy SCHED_FIFO process at priority 99 can hang the system
+    → Use: audio servers (PulseAudio), kernel threads
+
+  SCHED_RR (real-time):
+    → Round Robin variant of SCHED_FIFO
+    → Same priority model (1–99) but WITH a time slice
+    → Processes at same priority share CPU in round-robin fashion
+    → More forgiving than FIFO — won't fully monopolize a core
+
+  RT vs normal priority:
+    → ANY RT task (SCHED_FIFO or SCHED_RR) preempts ALL SCHED_OTHER tasks
+    → RT priority 1 > nice -20
+    → Set with: chrt -f 50 <command>   (FIFO at priority 50)
+
+  SCHED_DEADLINE (bonus — advanced):
+    → Tasks declare: runtime, deadline, period
+    → Kernel guarantees task gets `runtime` CPU within each `period`
+    → Used for hard real-time workloads
+
+Kubernetes CPU throttling + CFS Bandwidth Control:
+  → Kubernetes CPU limits are implemented via CFS bandwidth control (cgroups)
+  → Two cgroup parameters:
+      cpu.cfs_period_us:  the period window (default 100ms = 100,000 µs)
+      cpu.cfs_quota_us:   how many µs of CPU the cgroup gets per period
+  → Example: limits.cpu = 500m (0.5 cores)
+      quota  = 0.5 × 100,000 = 50,000 µs
+      → container gets 50ms of CPU per 100ms window
+  → If container uses its quota before the period ends → THROTTLED
+      → all processes in cgroup sleep until next period starts
+      → this shows up as: container.cpu.throttled_time in metrics
+  → Throttling is NOT visible as high CPU — it looks like latency spikes
+  → Common mistake: setting CPU limit = CPU request (too tight)
+      → bursty JVM/Go GC gets throttled mid-GC → tail latency spikes
+  → cpu.shares implements CPU requests (soft limit, weight-based)
+      → maps to CFS weight — only enforced under contention
+  → Limit  → hard ceiling via quota
+     Request → soft weight via shares
+```
+> 💡 **Interview tip:** Most candidates describe CFS as "round robin with priorities" — that's wrong and interviewers notice. The key insight is the **red-black tree + vruntime** model: the scheduler always picks the leftmost node (lowest vruntime), which makes the algorithm O(log N) and mathematically fair. For Kubernetes, the killer answer is explaining that **CPU throttling looks like latency, not high CPU usage** — a container pegged at 30% CPU can still be heavily throttled if it bursts above its limit within the 100ms window. Mention `container_cpu_cfs_throttled_periods_total` as the metric to watch. That answer separates SREs who've debugged this in production from those who only read about it.
+
 ---
 
 ### Q319 — Terraform | Scenario-Based | Advanced
