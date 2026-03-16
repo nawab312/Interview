@@ -104,6 +104,117 @@
 
 📁 **Reference:** `nawab312/Terraform` — backends, remote state, partial configuration sections
 
+#### Key Points to Cover:
+```
+A backend in Terraform defines two things:
+  Where state is stored — the `terraform.tfstate` file that tracks real-world resource mappings
+  How operations are executed — locally (on your machine) or remotely (on a server)
+
+Every Terraform configuration has a backend.
+If you don't declare one, Terraform silently uses the `local` backend.
+
+Local backend:
+  → State stored at ./terraform.tfstate (or custom path)
+  → No state locking — concurrent runs corrupt state
+  → Operations run on the local machine
+  → No collaboration — each developer has their own state
+  → Acceptable for: learning, solo projects, CI with ephemeral runners
+ 
+Remote backend (general):
+  → State stored in shared external system
+  → Locking prevents concurrent writes (DynamoDB, GCS native, etc.)
+  → Some backends (Terraform Cloud) also run operations remotely
+  → Enables team collaboration and auditability
+  → Required for: any production or team workflow
+ 
+State locking:
+  → Prevents two engineers running apply simultaneously
+  → DynamoDB used as lock table for S3 backend
+  → Lock is acquired at plan, released after apply or on explicit unlock
+  → terraform force-unlock <lock-id> used when lock is stuck
+ 
+State file sensitivity:
+  → Contains resource IDs, IPs, sometimes plaintext secrets
+  → Must be encrypted at rest (S3 SSE, GCS CMEK)
+  → Must have restricted IAM/ACL access
+  → Never commit to version control
+ 
+Backend operations (enhanced backends):
+  → Terraform Cloud / Enterprise can execute plan+apply remotely
+  → Standard backends (S3, GCS) only store state; operations remain local
+  → Remote operations enable policy checks (Sentinel), notifications, audit logs
+
+Backend Types and Their Use Cases
+  local
+     → Default if no backend block declared
+     → State at ./terraform.tfstate or custom path
+     → Use case: local dev, learning, throwaway environments
+     → No locking, no encryption, no sharing
+  s3 (AWS)
+     → State in S3 bucket; locking via DynamoDB table
+     → Supports SSE-S3, SSE-KMS encryption
+     → Use case: AWS-native teams, most common production choice
+     → Fine-grained IAM for access control per bucket/prefix
+  terraform cloud / terraform enterprise
+     → Enhanced backend: stores state AND runs operations remotely
+     → Includes Sentinel policy engine, SSO, audit logging, team RBAC
+     → Use case: enterprises needing governance, approval workflows, cost estimation
+     → workspace-based isolation; supports VCS-driven runs
+
+Honorable mentions:
+   http    → any REST endpoint; useful for custom state servers
+   consul  → HashiCorp Consul KV; locking built-in; used in Nomad-heavy shops
+   pg      → PostgreSQL table; good for teams already running Postgres
+
+Backend Partial Configuration
+Terraform requires backend config at `init` time — before variables are resolved.
+This means you cannot use `var.*` or `local.*` inside a `backend {}` block.
+Partial configuration solves this by letting you omit
+sensitive or environment-specific values from the checked-in code and supply them at init time instead.
+
+How it works:
+  → Commit a backend block with only non-sensitive structural config
+  → Omit: bucket names, key paths, region, DynamoDB table, role ARNs
+  → Supply the rest via one of three mechanisms at init time:
+      -backend-config="bucket=my-secret-bucket"   (CLI flag)
+      -backend-config=backend.hcl                 (separate HCL file, gitignored)
+      Environment variables (backend-specific, e.g. AWS_DEFAULT_REGION)
+
+Example — what lives in version control (main.tf):
+  terraform {
+    backend "s3" {
+      # structural only — no bucket, no key, no region
+      encrypt        = true
+      dynamodb_table = ""   # supplied at init
+    }
+  }
+
+Example — what lives outside version control (backend.hcl, in .gitignore):
+  bucket         = "my-company-tfstate-prod"
+  key            = "services/api/terraform.tfstate"
+  region         = "us-east-1"
+  dynamodb_table = "terraform-lock-table"
+  role_arn       = "arn:aws:iam::123456789:role/TerraformStateRole"
+
+Init command:
+  terraform init -backend-config=backend.hcl
+
+Why this matters:
+  → Bucket names reveal infrastructure topology — treat as sensitive
+  → Role ARNs and account IDs should not be public
+  → Different environments (dev/staging/prod) use different buckets;
+    partial config lets one codebase serve all environments
+  → CI/CD pipelines inject backend config from secrets manager at runtime
+  → Prevents accidental state cross-contamination between environments
+
+> 💡 **Interview tip:** Most candidates describe backends as just "where state is stored." Stand out by explaining **state locking mechanics** (DynamoDB as a lock table, what happens on a stuck lock), the **distinction between standard and enhanced backends**, and why you **cannot use variables inside a backend block** — that last point is the root reason partial configuration exists and shows you've actually hit this constraint in practice.
+ 
+> 💡 **Interview tip:** When asked about keeping sensitive config out of version control, don't just say "use environment variables." Walk through the **three partial configuration methods** (CLI flag, `-backend-config` HCL file, env vars), explain that the HCL file goes in `.gitignore`, and mention that CI/CD pipelines typically pull this file from a secrets manager (AWS Secrets Manager, Vault, GitHub Actions secrets) and write it to disk at init time. This shows production-grade thinking.
+ 
+> 💡 **Interview tip:** Know the failure modes. What happens if two engineers run `apply` simultaneously against an S3 backend **without** a DynamoDB lock table? *(State corruption — last write wins, one apply's changes are silently overwritten.)* What does `terraform force-unlock` do and when is it dangerous? *(Releases a stuck lock — dangerous if another process is genuinely mid-apply, not just crashed.)* These scenarios separate candidates who've used Terraform in production from those who've only followed tutorials.
+
+```
+
 ---
 
 ### Q275 — Prometheus | Scenario-Based | Advanced
