@@ -84,6 +84,138 @@
 
 📁 **Reference:** `nawab312/AWS` — AWS Backup, backup plans, cross-region copy, vault sections
 
+#### Key Points to Cover:
+```
+Core architecture
+The solution revolves around AWS Backup Vaults + Backup Plans.
+
+AWS Backup
+   │
+   ├── Backup Vault (Primary Region)
+   │       │
+   │       └── Backup Plan
+   │            ├── Daily rule
+   │            └── Weekly rule
+   │
+   ├── Cross-Region Copy
+   │       ↓
+   │   Backup Vault (DR Region)
+   │
+   └── Monitoring + Alerts
+         ├── CloudWatch
+         └── SNS
+
+Step 1 — Create Backup Vaults
+  Create two vaults:
+    Primary Region Vault: prod-backup-vault
+    prod-backup-vault: prod-backup-vault-dr
+  Enable: Vault encryption (AWS KMS)
+  Use: separate KMS key, restricted IAM access
+
+Step 2 — Create Backup Plans
+  In AWS Backup create two rules inside one backup plan.
+  Rule 1 — Daily Backups
+    Schedule: Daily
+    Retention: 30 days
+    Backup window: low traffic hours
+    Example: cron(0 2 * * ? *)
+    Resources: RDS, EBS, EFS, DynamoDB, S3
+  Rule 2 — Weekly Compliance Backup
+    Schedule: Weekly
+    Retention: 365 days
+    Example: cron(0 3 ? * SUN *)
+
+Step 3 — Resource Assignment
+  Resources are assigned using tags, not manual selection.
+  Example tagging strategy:
+    Backup = daily
+    Backup = weekly
+    Environment = prod
+  Backup plan uses: resource selection by tag
+  This ensures automatic backup of new resources. Example:
+    tag key: Backup
+    value: daily
+
+Step 4 — Cross-Region Backup Copy
+  Configure copy actions in backup rules. Example:
+    Primary Region → us-east-1
+    DR Region → us-west-2
+  Flow:
+    Backup created
+           ↓
+    Automatically copied
+           ↓
+    DR Backup Vault
+
+Step 5 — Backup Monitoring and Alerts
+  Requirement: Alert when any backup fails or is missing
+  CloudWatch Events
+  AWS Backup emits events:
+    Backup Job Failed
+    Copy Job Failed
+    Restore Job Failed
+  Create EventBridge rule:
+    source = aws.backup
+    detail-type = Backup Job State Change
+    state = FAILED
+  Trigger:
+    SNS notification
+    Slack / Email
+    PagerDuty
+
+Missing Backup Detection: Use AWS Backup Audit Manager. This checks:
+  Are backups occurring as expected?
+  Are retention policies respected?
+Example rule: RDS must have backup every 24h
+If violated: Alert triggered
+
+Step 6 — Monthly RDS Restore Testing
+  Requirement: RDS backups must be tested monthly
+  Process:
+    Monthly schedule
+          ↓
+    Lambda triggered
+          ↓
+    Restore RDS snapshot
+          ↓
+    Run validation tests
+          ↓
+    Delete test DB
+  Example validation:
+    database connectivity
+    schema check
+    data integrity
+    application health check
+
+Security Best Practices
+  Enable Backup Vault Lock. This prevents:
+    accidental deletion
+    malicious deletion (ransomware)
+  Vault lock enforces:
+    minimum retention
+    immutable backups
+  Also enable: cross-account backup copy cross-account backup copy
+
+Complete Workflow
+  Resources tagged for backup
+          ↓
+  AWS Backup Plan runs daily/weekly
+          ↓
+  Backups stored in Backup Vault
+          ↓
+  Copies sent to DR region
+          ↓
+  CloudWatch monitors jobs
+          ↓
+  SNS alerts on failures
+          ↓
+  Monthly Lambda restores RDS backup
+          ↓
+  Validation tests run
+```
+
+> 💡 **Interview tip:** For **AWS Backup** design questions, don’t stop at “daily and weekly backups.” Interviewers expect you to cover the **full backup lifecycle**: **backup creation**, **cross-region copy for disaster recovery**, **monitoring and alerting on failed or missing backups**, and **periodic restore testing**. The detail that often differentiates strong candidates is mentioning **tag-based backup selection (for automatic coverage of new resources)** and **Backup Vault Lock**, which protects backups from accidental or malicious deletion (ransomware scenarios).
+
 ---
 
 ### Q363 — Linux / Bash | Conceptual | Advanced
