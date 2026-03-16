@@ -2380,19 +2380,52 @@ Deduplication:
 📁 **Reference:** `nawab312/Terraform` — `moved` block, lifecycle, state
 
 ```
+Module refactoring means reorganizing how infrastructure code is structured without intending to change the actual infrastructure. Typical actions:
+  --> Move resources into modules
+  --> Split a large module into smaller modules
+  --> Rename modules
+  --> Rename resources
+  --> Change module paths
+```
+
+```
 Common causes of unintended replacements:
 
 Cause 1 — Resource renamed or moved to module:
   # Before:
-  resource "aws_s3_bucket" "logs" { bucket = "company-logs" }
-
-  # After refactor (moved to module):
-  module "logging" {
-    source = "./modules/s3"
+  resource "aws_instance" "web" {
+    ami           = "ami-123"
+    instance_type = "t3.micro"
   }
 
-  Terraform sees: aws_s3_bucket.logs DESTROY + module.logging.aws_s3_bucket.this CREATE
-  Fix — moved block tells Terraform about the rename:
+  # After refactor (moved to module):
+  module "compute" {
+    source = "./modules/ec2"
+  }
+
+  # And inside the module:
+  resource "aws_instance" "web" {
+    ami           = "ami-123"
+    instance_type = "t3.micro"
+  }
+
+  # Infrastructure should remain the same, but Terraform now sees:
+  Old address: aws_instance.web
+  New address: module.compute.aws_instance.web
+
+  # Terraform thinks: Old resource deleted, New resource created
+
+  # So terraform plan shows: -/+ aws_instance.web (destroy and recreate)
+
+  # Why refactoring causes unexpected replacements
+  # Terraform tracks infrastructure using state resource addresses.
+  # Because the address changed from aws_instance.web to module.compute.aws_instance.web,  Terraform believes:
+  # Old resource no longer exists. New resource must be created
+
+  # Correct fix — terraform state mv. Use the state move command to update resource addresses.
+  terraform state mv aws_instance.web module.compute.aws_instance.web
+
+  # Correct fix 2
   moved {
     from = aws_s3_bucket.logs
     to   = module.logging.aws_s3_bucket.this
